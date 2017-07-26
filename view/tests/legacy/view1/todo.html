@@ -1,0 +1,13 @@
+<div>
+	<a href="#" data-emit id="lang-fr">FR</a>
+	<a href="#" data-emit id="lang-en">EN</a>
+	<h1 data-i18n="todo.title">This is a TODO list</h1>
+	<h2>Name of the list : <span data-bind="name"/> </h2>
+	<ul data-bind="items[]">
+		<li>
+			<span data-bind="name" />
+			<span data-bind="status" />
+		</li>
+	</ul>
+	<button id="addItem" data-emit="click">Add item</button>
+</div>

@@ -1,0 +1,59 @@
+<html>
+<head>
+	<script src="../../src/velox-web-view.js"></script>
+	<script src="../../src/ext/velox-i18next.js"></script>
+	
+</head>
+<body>
+	<h1>Test 1</h1>
+	<div id="container"></div>
+	<div id="editContainer"></div>
+	<script>
+		var myList = {
+			name : "My list",
+			items : [
+				{name : "First item", status : "todo"},
+				{name : "Second item", status : "todo"},
+				{name : "Third item", status : "todo"}
+			]
+		}
+		var vList = new VeloxWebView("view1", "todo").init(
+			{
+				container : "container",
+				bindObject : myList
+			}
+		);
+		
+		vList.on("lang-fr", function(){
+			VeloxWebView.i18n.setLang("fr") ;
+		});
+		vList.on("lang-en", function(){
+			VeloxWebView.i18n.setLang("en") ;
+		})
+
+		vList.on("addItem", function(){
+			var newItem = { name : "", status : "todo"} ;
+			var vEdit = new VeloxWebView("view1", "todoForm").init({
+				container: "editContainer",
+				bindObject : newItem
+			}) ;
+			vEdit.on("validate", function(){
+				vEdit.updateData() ;
+				myList.items.push(newItem) ;
+				vList.reload() ;
+			}) ;
+			//myList.items[0].name = "changed !" ;
+		}) ;
+
+		setTimeout(function(){
+			VeloxWebView.i18n.setLang("fr", function(){
+				console.log("FR" + vList.tr("todo.title"));
+				console.log("FR" + VeloxWebView.tr("todo.title"));
+				VeloxWebView.i18n.setLang("en") ;
+				console.log(vList.tr("todo.title"));
+				console.log(VeloxWebView.tr("todo.title"));		
+			}) ;
+		}, 1000) ;
+	</script>
+</body>
+</html>
