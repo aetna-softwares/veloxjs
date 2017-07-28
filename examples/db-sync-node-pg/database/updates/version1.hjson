@@ -1,0 +1,19 @@
+{
+    version: 1,
+    queries : [
+        '''
+        CREATE TABLE todo_list (
+            uid VARCHAR(40) PRIMARY KEY, 
+            title VARCHAR(128), 
+            status VARCHAR(10)
+        )
+        ''',
+        '''
+        CREATE TABLE todo_item (
+            uid VARCHAR(40) PRIMARY KEY, 
+            list_uid VARCHAR(40) REFERENCES todo_list (uid), 
+            title VARCHAR(128)
+        )
+        '''
+    ]
+}

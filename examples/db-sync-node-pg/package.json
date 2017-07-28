@@ -1,0 +1,11 @@
+{
+  "name": "velox-example-db-sync-node-pg",
+  "description": "Velox database server",
+  "version": "1.0.0",
+  "main": "./index",
+  "private": true,
+  "dependencies": {
+    "express": "^4.15.3"
+  },
+  "devDependencies": {}
+}

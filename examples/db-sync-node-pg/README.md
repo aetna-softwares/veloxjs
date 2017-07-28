@@ -1,0 +1,1 @@
+This example is for client/server synchronization using Express/Postgresql server backend
