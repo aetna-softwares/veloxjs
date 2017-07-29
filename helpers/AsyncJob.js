@@ -10,9 +10,6 @@
  * let job = new AsyncJob(AsyncJob.SERIES) ; //AsyncJob.PARALLEL or AsyncJob.SERIES
  * for(let i=0; i<10; i++){ //some fancy loop
  * 
- *  //push promise
- *  job.push(new Promise((resolve, reject)=>{ ... })) ;
- * 
  *  //push resolve/reject function style
  *  job.push((resolve, reject)=>{ ... }) ;
  * 
@@ -46,33 +43,34 @@ class AsyncJob {
      * (please note that a function(resolve) without reject will be seen as a function(err) and won't work as expected)
      *
      * @example
-     *  //push promise
-     *  job.push(new Promise((resolve, reject)=>{ ... })) ;
-     * 
      *  //push resolve/reject function style
      *  job.push((resolve, reject)=>{ ... }) ;
      * 
      *  //push callback(err) function style
      *  job.push((callback)=>{ ... }) ;
      * 
-     * @param {Promise|function(resolve, reject)|function(err)} asyncWork 
+     * @param {function(resolve, reject)|function(err)} asyncWork 
      */
     push(asyncWork){
-        if(typeof(asyncWork) === "object" && asyncWork.constructor === Promise){
-            //get a promise directly
-            this._addPromise(asyncWork) ;
-        } else if(asyncWork.length === 1){
+        if(this.finalPromiseCreated){
+            throw "You cannot add new job after you start to wait to the result (i.e. after called then, catch, async or asPromise)" ;
+        }
+        if(this.jobError){
+            //discard this append because it already fall in error
+            return;
+        }
+        if(asyncWork.length === 1){
             //classical callback(err, result)
-            this._addPromise(new Promise((resolve, reject)=>{
+            
+            this._addPromise((resolve, reject)=>{
                 asyncWork((err)=>{
                     if(err){ return reject(err); }
-
                     resolve() ;
                 }) ;
-            })) ;
+            }) ;
         } else if (asyncWork.length === 2){
             //promise style resolve/reject
-            this._addPromise(new Promise(asyncWork)) ;
+            this._addPromise(asyncWork) ;
         } else {
             throw "You function should be either a promise or a callback(err) style function or promise(resolve, reject) style function" ;
         }
@@ -82,20 +80,30 @@ class AsyncJob {
      * add a promise following execution style
      * 
      * @private
-     * @param {Promise} promise 
+     * @param {function(resolve, reject)} func 
      */
-    _addPromise(promise){
-        if(this.finalPromiseCreated){
-            throw "You cannot add new job after you start to wait to the result (i.e. after called then, catch, async or asPromise)" ;
-        }
+    _addPromise(func){
+        
         if(this.style === AsyncJob.PARALLEL ){
             if(!this.promises){ this.promises = [] ; }
-            this.promises.push(promise) ;
+            this.promises.push(new Promise(func)) ;
         } else if(this.style === AsyncJob.SERIES ){
-            if(!this.chain){ this.chain = Promise.resolve() ; }
-            this.chain = this.chain.then(()=>{
-                return promise ;
-            });
+
+            if(!this.chain){ 
+
+                this.chain = new Promise(func);
+                this.chain.catch((err)=>{
+                    this.jobError = err ;
+                }); ; 
+            }else{
+                this.chain = this.chain.then(()=>{
+                    let nextPromise = new Promise(func);
+                    nextPromise.catch((err)=>{
+                        this.jobError = err ;
+                    }); 
+                    return nextPromise ;
+                });
+            }            
         }
     }
 
@@ -117,6 +125,10 @@ class AsyncJob {
      * @return {AsyncJob} - return itself for chaining
      */
     catch(callback){
+        if(this.jobError){
+            //already fall in error
+            return callback(this.jobError) ;
+        }
         this.asPromise().catch(callback) ;
         return this;
     }
@@ -143,6 +155,10 @@ class AsyncJob {
      * @param {function(err)} callback - called when execution is finished
      */
     async(callback){
+        if(this.jobError){
+            //already fall in error
+            return callback(this.jobError) ;
+        }
         this.asPromise().then(()=>{
             callback() ;
         })

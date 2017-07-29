@@ -1,5 +1,6 @@
 const { Pool, Client } = require('pg');
 const AsyncJob = require("../../../../../helpers/AsyncJob") ;
+const VeloxLogger = require("../../../../../helpers/VeloxLogger") ;
 
 const DB_VERSION_TABLE = "velox_db_version" ;
 
@@ -8,12 +9,14 @@ class VeloxDbPgClient {
     /**
      * Create the client connection
      * 
-     * @param {object} connection - The connection client from the pool
-     * @param {function} closeCb - the callback to give back the client to the pool
+     * @param {object} connection The connection client from the pool
+     * @param {function} closeCb the callback to give back the client to the pool
+     * @param {VeloxLogger} logger logger
      */
-    constructor(connection, closeCb){
+    constructor(connection, closeCb, logger){
         this.connection = connection;
         this.closeCb = closeCb ;
+        this.logger = logger ;
     }
 
     /**
@@ -28,7 +31,7 @@ class VeloxDbPgClient {
                     AND    tablename = $1
                     ) as exist`, [DB_VERSION_TABLE], (err, res) => {
                 if(err){ return callback(err); }
-                callback(null, res.rows[0] === true)
+                callback(null, res.rows[0].exist === true) ;
           });
     }
 
@@ -40,7 +43,7 @@ class VeloxDbPgClient {
     createDbVersionTable(callback) {
           this.connection.query(`CREATE TABLE ${DB_VERSION_TABLE} (
                     version bigint,
-                    last_update timestamp without timezone
+                    last_update timestamp without time zone
                     ) `, [], (err) => {
                         if(err){ return callback(err); }
                         this.connection.query(`INSERT INTO ${DB_VERSION_TABLE} (version, last_update) 
@@ -78,10 +81,12 @@ class VeloxDbPgClient {
      * @param {function(err, results)} callback - called when finished
      */
     query(sql, params, callback){
+        
         if(!callback && typeof(params) === "function"){
             callback = params;
             params = [];
         }
+        this.logger.debug("Run SQL "+sql+", params "+JSON.stringify(params)) ;
         this.connection.query(sql, params, callback) ;
     }
 
@@ -95,12 +100,21 @@ class VeloxDbPgClient {
         this.transaction((tx, done)=>{
             let job = new AsyncJob(AsyncJob.SERIES) ;
             for(let change of changes){
-                job.push((cb)=>{
-                    tx.query(change.sql, change.params, cb) ;
-                }) ;
+                if(change.run){
+                    //this change is a function that must be executed
+                    job.push((cb)=>{
+                        
+                        change.run(tx, cb) ;
+                    }) ;
+                } else {
+                    //this change is a SQL query to run
+                    job.push((cb)=>{
+                        tx.query(change.sql, change.params, cb) ;
+                    }) ;
+                }
             }
             job.push((cb)=>{
-                tx.query(`UPDATE ${DB_VERSION_TABLE} SET version = $1`, [newVersion], cb) ;
+                tx.query(`UPDATE ${DB_VERSION_TABLE} SET version = $1, last_update = now()`, [newVersion], cb) ;
             }) ;
             job.async(done) ;
         }, callback) ;
@@ -142,10 +156,10 @@ class VeloxDbPgClient {
         var finished = false;
         if(timeout === undefined){ timeout = 30; }
 			
-        var tx = new VeloxDbPgClient(this.connection, function(){}) ;
+        var tx = new VeloxDbPgClient(this.connection, function(){}, this.logger) ;
         tx.transaction = function(){ throw "You should not start a transaction in a transaction !"; }
             
-		this.connection.beginTransaction(function(err) {
+		this.connection.query("BEGIN", (err) => {
             if(err){
                 finished = true ;
                 return callbackDone(err);
@@ -156,7 +170,7 @@ class VeloxDbPgClient {
                 timeoutId = setTimeout(function(){
                     if(!finished){
                         //if the transaction is not closed, do rollback
-                        this.connection.rollback((err)=>{
+                        this.connection.query("ROLLBACK", (err)=>{
                             finished = true;
                             if(err) {
                                 return callbackDone("Transaction timeout after "+timeout+" seconds. Rollback failed : "+err);
@@ -177,7 +191,7 @@ class VeloxDbPgClient {
                         if(err){
                             if(!finished){
                                 //if the transaction is not closed, do rollback
-                                this.connection.rollback((errRollback)=>{
+                                this.connection.query("ROLLBACK", (errRollback)=>{
                                     if(timeoutId){ clearTimeout(timeoutId) ;}
                                     finished = true;
                                     if(errRollback) {
@@ -190,7 +204,7 @@ class VeloxDbPgClient {
                                 callbackDone(err) ;
                             }
                         } else {
-                            this.connection.commit((errCommit)=>{
+                            this.connection.query("COMMIT",(errCommit)=>{
                                 if(timeoutId){ clearTimeout(timeoutId) ;}
                                 finished = true;
                                 if(errCommit) {
@@ -203,7 +217,7 @@ class VeloxDbPgClient {
             }catch(e){
                 if(!finished){
                     //if the transaction is not closed, do rollback
-                    this.connection.rollback((errRollback)=>{
+                    this.connection.query("ROLLBACK",(errRollback)=>{
                         if(timeoutId){ clearTimeout(timeoutId) ;}
                         finished = true;
                         if(errRollback) {
@@ -261,10 +275,32 @@ class VeloxDbPgClient {
     }
 }
 
+/**
+ * VeloxDatabase PostgreSQL backend
+ */
 class VeloxDbPgBackend {
 
+   /**
+     * @typedef VeloxDbPgBackendOptions
+     * @type {object}
+     * @property {string} user database user
+     * @property {string} host database host
+     * @property {string} database database name
+     * @property {string} password database password
+     * @property {VeloxLogger} logger logger
+     */
+
+    /**
+     * Create a VeloxDbPgBackend
+     * 
+     * @param {VeloxDbPgBackendOptions} options 
+     */
     constructor(options){
         this.options = options ;
+
+        for( let k of ["user", "host", "port", "database", "password"]){
+            if(options[k] === undefined) { throw "VeloxDbPgBackend : missing option "+k ; } 
+        }
 
         this.pool = new Pool({
             user: options.user,
@@ -273,6 +309,8 @@ class VeloxDbPgBackend {
             password: options.password,
             port: options.port || 3211
         }) ;
+
+        this.logger = new VeloxLogger("VeloxDbPgBackend", options.logger) ;
 
     }
 
@@ -285,7 +323,7 @@ class VeloxDbPgBackend {
         this.pool.connect((err, client, done) => {
             if(err){ return callback(err); }
 
-            let dbClient = new VeloxDbPgClient(client, done) ;
+            let dbClient = new VeloxDbPgClient(client, done, this.logger) ;
             callback(null, dbClient) ;
         });
     }
@@ -300,18 +338,21 @@ class VeloxDbPgBackend {
         client.connect((err) => {
             if(err){ 
                 //likely db does not exists
+                this.logger.info("Database does not exists, try to create");
                 let optionsTemplate1 = JSON.parse(JSON.stringify(this.options)) ;
                 optionsTemplate1.database = "template1" ;
                 const clientTemplate = new Client(optionsTemplate1) ;
                 clientTemplate.connect((err)=>{
                     if(err) {
                         //can't connect to template1 to create database
+                        this.logger.error("Can't connect to template1 to create database");
                         return callback(err) ;
                     }
                     clientTemplate.query("CREATE DATABASE "+this.options.database, [], (err)=>{
                         clientTemplate.end() ;
                         if(err){
                             //CREATE query failed
+                            this.logger.error("Create database failed");
                             return callback(err) ;
                         }
                         callback(); //CREATE ok
@@ -319,6 +360,7 @@ class VeloxDbPgBackend {
                 }) ;
             }else{
                 //connection OK
+                this.logger.debug("Database connection OK");
                 client.end() ;
                 callback() ;
             }

@@ -1,0 +1,2 @@
+docker pull postgres:9.4
+docker run --restart=always -p 0.0.0.0:8432:5432 --name docker-pg -v /usr/local/docker-volume/pg:/var/lib/postgresql/data -e POSTGRES_USER=velox -e POSTGRES_PASSWORD=velox -d postgres:9.4

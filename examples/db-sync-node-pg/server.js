@@ -1,14 +1,20 @@
 const express = require('express');
 const app = express();
 const VeloxDatabase = require("../../database/server/src/VeloxDatabase");
+const VeloxSqlModifTracker = require("../../database/server/src/ext/VeloxSqlModifTracker");
+const VeloxSqlDeleteTracker = require("../../database/server/src/ext/VeloxSqlDeleteTracker");
+
 const path = require("path");
 
+VeloxDatabase.registerExtension(new VeloxSqlModifTracker()) ;
+VeloxDatabase.registerExtension(new VeloxSqlDeleteTracker()) ;
+
 const DB = new VeloxDatabase({
-  user: "odoo",
-  password: "odoo",
+  user: "velox",
+  password: "velox",
   database: "velox_todo",
   host: "localhost",
-  port: 9432,
+  port: 8432,
   backend: "pg",
   migrationFolder: path.join(__dirname, "database", "updates")
 }) ;
@@ -21,7 +27,8 @@ app.use(express.static('public'));
 
 DB.updateSchema((err) => {
   if(err){
-    console.error("Can't update database schema");
+    console.error("Can't update database schema", err);
+    process.exit(1) ;
   }
 
   console.log("DB update done") ;

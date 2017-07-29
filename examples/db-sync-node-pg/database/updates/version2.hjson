@@ -1,0 +1,8 @@
+{
+    version: 2,
+    queries : [
+        '''
+        ALTER TABLE todo_item ADD COLUMN description VARCHAR(255)
+        '''
+    ]
+}

@@ -5,6 +5,10 @@ const AsyncJob = require("../../../helpers/AsyncJob") ;
 
 /**
  * contains a SQL change
+ * 
+ * @property {number} sinceVersion - modification to do in version
+ * @property {string} sql - sql query to apply
+ * @property {Array} [params] - sql params
  */
 class VeloxSqlChange {
     /**
@@ -48,7 +52,7 @@ class VeloxSqlUpdater {
      * @return {VeloxSqlChange[]} - the list of changes to apply
      */
     getChanges(fromVersion, toVersion){
-        this._getSortedChanges().filter((c)=>{
+        return this._getSortedChanges().filter((c)=>{
             return c.sinceVersion > fromVersion && 
                 (!toVersion || c.sinceVersion<=toVersion) ;
         }) ;
@@ -61,7 +65,7 @@ class VeloxSqlUpdater {
      */
     getLastVersion() {
         if(this.changes.length === 0){ return 0; }
-        this._getSortedChanges()[0].sinceVersion ;
+        return this._getSortedChanges()[0].sinceVersion ;
     }
 
     /**
@@ -92,7 +96,7 @@ class VeloxSqlUpdater {
      * @param {function(err)} callback - Called when loaded all files
      */
     loadChanges(folder, callback){
-        fs.readdir(folder, function(err, fileList){
+        fs.readdir(folder, (err, fileList)=>{
             if(err){ return callback(err) ;}
             let jobRead = new AsyncJob(AsyncJob.PARALLEL) ;
             let changes = [] ;
@@ -114,6 +118,9 @@ class VeloxSqlUpdater {
                             }
 
                             let toVersion = hjsonFile.version ;
+                            if(changes.some((c)=> { return c.sinceVersion === toVersion; })){
+                                throw "Error parsing file "+file+", another file already define version "+toVersion ;
+                            }
                             for(let q of hjsonFile.queries){
                                 if(typeof(q) === "string"){
                                     changes.push(new VeloxSqlChange(toVersion, q, [])) ;
