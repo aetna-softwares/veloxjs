@@ -1,13 +1,11 @@
 const express = require('express');
 const app = express();
 const VeloxDatabase = require("../../database/server/src/VeloxDatabase");
-const VeloxSqlModifTracker = require("../../database/server/src/ext/VeloxSqlModifTracker");
-const VeloxSqlDeleteTracker = require("../../database/server/src/ext/VeloxSqlDeleteTracker");
+const VeloxSqlSync = require("../../database/server/src/ext/VeloxSqlSync");
 
 const path = require("path");
 
-VeloxDatabase.registerExtension(new VeloxSqlModifTracker()) ;
-VeloxDatabase.registerExtension(new VeloxSqlDeleteTracker()) ;
+VeloxDatabase.registerExtension(new VeloxSqlSync()) ;
 
 const DB = new VeloxDatabase({
   user: "velox",
@@ -24,6 +22,16 @@ app.get('/', function (req, res) {
 }) ;
 
 app.use(express.static('public'));
+
+app.use('/velox/dbSync', function(req, res){
+  let changeSet = req.body ;
+  DB.syncChangeSet(changeSet, (err)=>{
+    if(err) {
+      return res.status(500).json(err) ;
+    }
+    res.end("OK") ;
+  }) ;
+}) ;
 
 DB.updateSchema((err) => {
   if(err){

@@ -56,6 +56,14 @@ class VeloxDatabase {
             password: options.password,
             logger: logger
         });
+
+        for(let extension of VeloxDatabase.extensions){
+            if(extension.extendsBackends && extension.extendsBackends[options.backend]){                
+                Object.keys(extension.extendsBackends[options.backend]).forEach((key)=> {
+                    this.backend[key] = extension.extendsBackends[options.backend][key];
+                });
+            }
+        }
     }
 
     /**
@@ -82,6 +90,144 @@ class VeloxDatabase {
                 }) ;
             }) ;
         }) ;
+    }
+
+    /**
+     * Do actions in database
+     * 
+     * Note : you should use this when you have only read action to do. If you need insert/update, use the transaction
+     * 
+     * @example
+     * db.inDatabase((client, done){
+     *    //run a first query    
+     *    client.query(sql, [...], (err, result1) => {
+     *        if(err){ return done(err); }
+     * 
+     *        //return a second query
+     *        client.query(sql, [...], (err, result2) => {
+     *           if(err){ return done(err); }
+     * 
+     *           //finished !
+     *           done(null, result1, result2) ;
+     *        }) ;
+     *    }) ;
+     * }, (err, result1, result2) {
+     *      if(err) { return console.log("error in database "+err); }
+     *      
+     *      //done
+     *      console.log("my results : "+result1+", "+result2) ;
+     * }) ;
+     * 
+     * @param {function(VeloxDatabaseClient, function)} callbackDoInDb function that do the needed job in database
+     * @param {function(Error)} callbackDone function called when database actions are done
+     */
+    inDatabase(callbackDoInDb, callbackDone){
+        this.backend.open((err, client)=>{
+            if(err){ return callbackDone(err); }
+            try {
+                callbackDoInDb(client, (err)=>{
+                    client.close() ;
+                    if(err){ return callbackDone(err); }
+
+                    callbackDone.apply(null, arguments) ;
+                }) ;
+            } catch (error) {
+                client.close() ;
+                return callbackDone(error);
+            }
+        }) ;
+    }
+
+    /**
+     * Alias of inDatabase
+     * 
+     * @see #transaction
+     */
+    inDb(callbackDoInDb, callbackDone){ 
+        this.inDatabase(callbackDoInDb, callbackDone) ;
+    }
+
+    /**
+     * Do some actions in a database inside an unique transaction
+     * 
+     * @example
+     *          db.transaction("Insert profile and user",
+     *          function txActions(tx, done){
+     *              tx.query("...", [], (err, result) => {
+     *                   if(err){ return done(err); } //error handling
+     *
+     *                   //profile inserted, insert user
+     *                   tx.query("...", [], (err) => {
+     *                      if(err){ return done(err); } //error handling
+     *                      //finish succesfully
+     *                      done(null, "a result");
+     *                  });
+     *              });
+     *          },
+     *          function txDone(err, result){
+     *              if(err){
+     *              	return logger.error("Error !!", err) ;
+     *              }
+     *              logger.info("Success !!")
+     *          });
+     *
+     * @param {function({VeloxDbPgClient}, {function(err, result)})} callbackDoTransaction - function that do the content of the transaction receive tx should call done() on finish
+     * @param {function(err)} [callbackDone] - called when the transaction is finished
+     * @param {number} [timeout] - if this timeout (seconds) is expired, the transaction is automatically rollbacked.
+     *          If not set, default value is 30s. If set to 0, there is no timeout (not recomended)
+     *
+     */
+    transaction(callbackDoTransaction, callbackDone, timeout){ 
+        this.backend.open((err, client)=>{
+            if(err){ return callbackDone(err) ;}
+            client.transaction(callbackDoTransaction, (err)=>{
+                client.close() ;
+                if(err){ 
+                    return callbackDone(err) ;
+                }
+                callbackDone() ;
+            }, timeout) ;
+        }) ;
+    }
+
+    /**
+     * Alias of transaction
+     * 
+     * @see #transaction
+     */
+    tx(callbackDoTransaction, callbackDone, timeout){ 
+        this.transaction(callbackDoTransaction, callbackDone, timeout) ;
+    }
+
+    /**
+     * Do a set of change in a transaction
+     * 
+     * The change set format is :
+     * {
+     *  changes : [
+     *      action: "insert" | "update" | "auto" ("auto" if not given)
+     *      table : table name
+     *      record: {record to sync}
+     *  ]
+     * }
+     * 
+     * your record can contain the special syntax ${table.field} it will be replaced by the field value from last insert/update on this table in the transaction
+     * it is useful if you have some kind of auto id used as foreign key
+     * 
+     * @example
+     * {
+     *   changes : [
+     *      { table : "foo", record: {key1: "val1", key2: "val2"}, action: "insert"},
+     *      { table : "bar", record: {foo_id: "${foo.id}", key3: "val3"}}
+     *   ]
+     * }
+     * 
+     * 
+     * @param {object} changeSet the changes to do in this transaction 
+     * @param {function(Error)} callback called on finish
+     */
+    transactionalChanges(changeSet, callback){
+        this.backend.transactionalChanges(changeSet, callback) ;
     }
 
     /**
@@ -152,7 +298,8 @@ VeloxDatabase.extensions = [];
  * @typedef VeloxDatabaseExtension
  * @type {object}
  * @property {string} name name of the extension
- * @property {function({function})} [schemaUpdate] called after schemaUpdate
+ * @property {VeloxDatabaseExtension[]} [dependencies] dependencies on other extensions
+ * @property {function} [addSchemaChanges] add schema change on schema update
  * @property {object} [extendsProto] object containing function to add to VeloxWebView prototype
  * @property {object} [extendsGlobal] object containing function to add to VeloxWebView global object
  * @property {object} [extendsBackends]  object that extend backend clients
@@ -164,6 +311,23 @@ VeloxDatabase.extensions = [];
  * @param {VeloxDatabaseExtension} extension - The extension to register
  */
 VeloxDatabase.registerExtension = function (extension) {
+    if(!extension.name) {
+        throw "Extension should have a name";
+    }
+
+    if(VeloxDatabase.extensions.some((ext)=>{
+        return ext.name === extension.name ;
+    })){
+        console.log("Extension "+extension.name+" is already registered, ignore") ;
+        return;
+    }
+
+    if(extension.dependencies){
+        for(let d of extension.dependencies){
+            VeloxDatabase.registerExtension(d) ;
+        }
+    }
+
     VeloxDatabase.extensions.push(extension);
 
     if (extension.extendsProto) {
@@ -178,6 +342,262 @@ VeloxDatabase.registerExtension = function (extension) {
     }
 };
 
+
+/**
+ * This class wrap a database connection with some helping function.
+ * 
+ * It should be implemented for each backend
+ */
+class VeloxDatabaseClient {
+
+    /**
+     * Check if the db version table exists
+     * 
+     * Note : this function is for internal schema update usage. It may be changed or
+     * be remove anytime, don't rely on it
+     * 
+     * @param {function(err, exists)} callback - Called when check is done
+     */
+    dbVersionTableExists(callback) { callback("not implemented"); }
+
+    /**
+     * Create the db version table and initialize it with version 0
+     * 
+     * Note : this function is for internal schema update usage. It may be changed or
+     * be remove anytime, don't rely on it
+     * 
+     * @param {function(err)} callback - called when finished
+     */
+    createDbVersionTable(callback) { callback("not implemented"); }
+
+    /**
+     * Get database version number
+     * 
+     * @param {function(err, version)} callback - called when finished with the version number
+     */
+    getCurrentVersion(callback) { callback("not implemented"); }
+
+    /**
+     * Execute a query and give the result back
+     * 
+     * @param {string} sql - SQL to execute
+     * @param {Array} [params] - Params
+     * @param {function(err, results)} callback - called when finished
+     */
+    query(sql, params, callback){ callback("not implemented"); }
+
+    /**
+     * Execute a query and give the first result back
+     * 
+     * Note : the query is not modified, you should add the LIMIT clause yourself !
+     * 
+     * @param {string} sql - SQL to execute
+     * @param {Array} [params] - Params
+     * @param {function(err, results)} callback - called when finished
+     */
+    queryFirst(sql, params, callback){ callback("not implemented"); }
+
+    /**
+     * Get a record in the table by its pk
+     * 
+     * @example
+     * //get by simple pk
+     * client.getByPk("foo", "id", (err, fooRecord)=>{...})
+     * 
+     * //get with composed pk
+     * client.getByPk("bar", {k1: "valKey1", k2: "valKey2"}, (err, barRecord)=>{...})
+     * 
+     * //already have the record containing pk value, just give it...
+     * client.getByPk("bar", barRecordAlreadyHaving, (err, barRecordFromDb)=>{...})
+     * 
+     * @param {string} table the table name
+     * @param {any|object} pk the pk value. can be an object containing each value for composed keys
+     * @param {function(Error,object)} callback called with result. give null if not found
+     */
+    getByPk(table, pk, callback){ callback("not implemented"); }
+
+
+    /**
+     * Insert a record in the table. Give back the inserted record (with potential generated values)
+     * 
+     * @param {string} table the table name
+     * @param {object} record the object to insert
+     * @param {function(Error, object)} callback called when insert is done. give back the inserted result (with potential generated values)
+     */
+    insert(table, record, callback){ callback("not implemented"); }
+
+    /**
+     * Update a record in the table. Give back the updated record (with potential generated values)
+     * 
+     * @param {string} table the table name
+     * @param {object} record the object to insert
+     * @param {function(Error, object)} callback called when insert is done. give back the updated result (with potential generated values)
+     */
+    update(table, record, callback){ callback("not implemented"); }
+
+    /**
+     * Helpers to do simple search in table
+     * 
+     * The search object can contains : 
+     * simple equals condition as {foo: "bar"}
+     * in condition as {foo: ["val1", "val2"]}
+     * ilike condition as {foo: "bar%"} (activated by presence of %)
+     * is null condition as {foo : null}
+     * more complex conditions must specify operand explicitely :
+     * {foo: {ope : ">", value : 1}}
+     * {foo: {ope : "<", value : 10}}
+     * {foo: {ope : "between", value : [from, to]}}
+     * {foo: {ope : "not in", value : ["", ""]}}
+     * 
+     * @param {string} table table name
+     * @param {object} search search object
+     * @param {string} [orderBy] order by clause
+     * @param {function(Error, Array)} callback called on finished. give back the found records
+     */
+    search(table, search, orderBy, callback){ callback("not implemented"); }
+
+    /**
+     * Helpers to do simple search in table and return first found record
+     * 
+     * The search object can contains : 
+     * simple equals condition as {foo: "bar"}
+     * in condition as {foo: ["val1", "val2"]}
+     * ilike condition as {foo: "bar%"} (activated by presence of %)
+     * is null condition as {foo : null}
+     * more complex conditions must specify operand explicitely :
+     * {foo: {ope : ">", value : 1}}
+     * {foo: {ope : "<", value : 10}}
+     * {foo: {ope : "between", value : [from, to]}}
+     * {foo: {ope : "not in", value : ["", ""]}}
+     * 
+     * @param {string} table table name
+     * @param {object} search search object
+     * @param {string} [orderBy] order by clause
+     * @param {function(Error, Array)} callback called on finished. give back the first found records
+     */
+    searchFirst(table, search, orderBy, callback){ callback("not implemented"); }
+
+    /**
+     * Get the columns of a table. Give back an array of columns definition
+     * 
+     * Note : result is cached so in the case you modify the table while application is running you should restart to see the modifications
+     * 
+     * @param {string} table the table name
+     * @param {function(Error, Array)} callback called when found primary key, return array of column definitions
+     */
+    getColumnsDefinition(table, callback){ callback("not implemented"); }
+
+    /**
+     * Get the primary key of a table. Give back an array of column composing the primary key
+     * 
+     * Note : result is cached so in the case you modify the table while application is running you should restart to see the modifications
+     * 
+     * @param {string} table the table name
+     * @param {function(Error, Array)} callback called when found primary key, return array of column names composing primary key
+     */
+    getPrimaryKey(table, callback){ callback("not implemented"); }
+
+    /**
+     * Execute the schema changes and update the version number
+     * 
+     * Note : this function is for internal schema update usage. It may be changed or
+     * be remove anytime, don't rely on it
+     * 
+     * @param {VeloxSqlChange[]} changes - Array of changes
+     * @param {number} newVersion - The new database version
+     * @param {function(err)} callback - called when finish
+     */
+    runQueriesAndUpdateVersion(changes, newVersion, callback){ callback("not implemented"); }
+
+
+     /**
+     * Do some actions in a database inside an unique transaction
+     * 
+     * @example
+     *          db.transaction("Insert profile and user",
+     *          function txActions(tx, done){
+     *              tx.query("...", [], (err, result) => {
+     *                   if(err){ return done(err); } //error handling
+     *
+     *                   //profile inserted, insert user
+     *                   tx.query("...", [], (err) => {
+     *                      if(err){ return done(err); } //error handling
+     *                      //finish succesfully
+     *                      done(null, "a result");
+     *                  });
+     *              });
+     *          },
+     *          function txDone(err, result){
+     *              if(err){
+     *              	return logger.error("Error !!", err) ;
+     *              }
+     *              logger.info("Success !!")
+     *          });
+     *
+     * @param {function({VeloxDbPgClient}, {function(err, result)})} callbackDoTransaction - function that do the content of the transaction receive tx should call done() on finish
+     * @param {function(err)} [callbackDone] - called when the transaction is finished
+     * @param {number} [timeout] - if this timeout (seconds) is expired, the transaction is automatically rollbacked.
+     *          If not set, default value is 30s. If set to 0, there is no timeout (not recomended)
+     *
+     */
+    transaction(callbackDoTransaction, callbackDone, timeout){ callbackDone("not implemented"); }
+
+
+    /**
+     * Do a set of change in a transaction
+     * 
+     * The change set format is :
+     * {
+     *  changes : [
+     *      action: "insert" | "update" | "auto" ("auto" if not given)
+     *      table : table name
+     *      record: {record to sync}
+     *  ]
+     * }
+     * 
+     * your record can contain the special syntax ${table.field} it will be replaced by the field value from last insert/update on this table in the transaction
+     * it is useful if you have some kind of auto id used as foreign key
+     * 
+     * @example
+     * 
+     * {
+     *   changes : [
+     *      { table : "foo", record: {key1: "val1", key2: "val2"}, action: "insert"},
+     *      { table : "bar", record: {foo_id: "${foo.id}", key3: "val3"}}
+     *   ]
+     * }
+     * 
+     * 
+     * @param {object} changeSet the changes to do in this transaction 
+     * @param {function(Error)} callback called on finish
+     */
+    transactionalChanges(changeSet, callback){ callback("not implemented"); }
+
+
+    /**
+     * Delete a record in the table by its pk
+     * 
+     * @example
+     * //delete by simple pk
+     * client.remove("foo", "id", (err)=>{...})
+     * 
+     * //delete with composed pk
+     * client.remove("bar", {k1: "valKey1", k2: "valKey2"}, (err)=>{...})
+     * 
+     * //already have the record containing pk value, just give it...
+     * client.remove("bar", barRecordAlreadyHaving, (err)=>{...})
+     * 
+     * @param {string} table the table name
+     * @param {any|object} pk the pk value. can be an object containing each value for composed keys
+     * @param {function(Error)} callback called when done
+     */
+    remove(table, pk, callback){ callback("not implemented"); }
+
+    /**
+     * Close the database connection
+     */
+    close() { throw "not implemented" ; }
+}
 
 
 module.exports = VeloxDatabase ;

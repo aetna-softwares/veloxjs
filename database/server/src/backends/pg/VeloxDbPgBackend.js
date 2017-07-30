@@ -175,6 +175,65 @@ class VeloxDbPgClient {
         }) ;
     }
 
+    /**
+     * Delete a record in the table by its pk
+     * 
+     * @example
+     * //delete by simple pk
+     * client.remove("foo", "id", (err)=>{...})
+     * 
+     * //delete with composed pk
+     * client.remove("bar", {k1: "valKey1", k2: "valKey2"}, (err)=>{...})
+     * 
+     * //already have the record containing pk value, just give it...
+     * client.remove("bar", barRecordAlreadyHaving, (err)=>{...})
+     * 
+     * @param {string} table the table name
+     * @param {any|object} pk the pk value. can be an object containing each value for composed keys
+     * @param {function(Error)} callback called when done
+     */
+    remove(table, pk, callback){
+        this.getPrimaryKey(table, (err, pkColumns)=>{
+            if(err){ return callback(err); }
+
+            if(pkColumns.length === 0){
+                return callback("Error deleting in table "+table+", no primary column for this table") ;
+            }
+
+            //check given pk is consistent with table pk
+            if(typeof(pk) === "object"){
+                //the given pk has the form {col1: "", col2: ""}
+                if(Object.keys(pk).length !== pkColumns.length){
+                    return callback("Error deleting in table "+table+", the given PK has "+Object.keys(pk).length+" properties but PK has "+pkColumns.length) ;
+                }
+                for(let k of pkColumns){
+                    if(Object.keys(pk).indexOf(k) === -1){
+                        return callback("Error deleting in table "+table+", the given PK miss "+k+" property") ;
+                    }
+                }
+            }else{
+                //the given pk is a simple value, assuming simple PK form
+                if(pkColumns.length > 1){
+                    return callback("Error deleting in table "+table+", the primary key should be composed of "+pkColumns.join(", "));
+                }
+                let formatedPk = {} ;
+                formatedPk[pkColumns[0]] = pk ;
+                pk = formatedPk ;
+            }
+
+            let where = [] ;
+            let params = [] ;
+            for(let k of pkColumns){
+                params.push(pk[k]) ;
+                where.push(k+" = $"+params.length) ;
+            }
+
+            let sql = `DELETE FROM ${table} WHERE ${where.join(" AND ")}` ;
+
+            this.query(sql, params, callback) ;
+        }) ;
+    }
+
 
     /**
      * Insert a record in the table. Give back the inserted record (with potential generated values)
@@ -386,6 +445,119 @@ class VeloxDbPgClient {
     }
 
     /**
+     * Do a set of change in a transaction
+     * 
+     * The change set format is :
+     * {
+     *  changes : [
+     *      action: "insert" | "update" | "auto" ("auto" if not given)
+     *      table : table name
+     *      record: {record to sync}
+     *  ]
+     * }
+     * 
+     * your record can contain the special syntax ${table.field} it will be replaced by the field value from last insert/update on this table in the transaction
+     * it is useful if you have some kind of auto id used as foreign key
+     * 
+     * @example
+     * 
+     * {
+     *   changes : [
+     *      { table : "foo", record: {key1: "val1", key2: "val2"}, action: "insert"},
+     *      { table : "bar", record: {foo_id: "${foo.id}", key3: "val3"}}
+     *   ]
+     * }
+     * 
+     * 
+     * @param {object} changeSet the changes to do in this transaction 
+     * @param {function(Error)} callback called on finish
+     */
+    transactionalChanges(changeSet, callback){
+        this.transaction((tx, done)=>{
+            let job = new AsyncJob(AsyncJob.SERIES) ;
+            let recordCache = {};
+            for(let change of changeSet.changes){
+                let record = change.record ;
+                for(let k of Object.keys(record)){
+                    if(record[k] && record[k].indexOf("${") === 0){
+                        //this record contains ${table.field} that must be replaced by the real value of last inserted record of this table
+                        let [othertable, otherfield] = record[k].replace("${", "").replace("}", "").split(".") ;
+                        if(recordCache[othertable]){
+                            record[k] = recordCache[othertable][otherfield] ;
+                        }
+                    }
+                }
+                let table = change.table ;
+                let action = change.action ;
+                if(action === "insert"){
+                    job.push((cb)=>{
+                        tx.insert(table, record, (err, insertedRecord)=>{
+                            if(err){ return cb(err); }
+                            recordCache[table] = insertedRecord ;
+                            cb() ;
+                        }) ;
+                    });
+                }
+                if(action === "update"){
+                    job.push((cb)=>{
+                        tx.update(table, record, (err, updatedRecord)=>{
+                            if(err){ return cb(err); }
+                            recordCache[table] = updatedRecord ;
+                            cb() ;
+                        }) ;
+                    });
+                }
+                if(!action || action === "auto"){
+                    job.push((cb)=>{
+                        this.getPrimaryKey(table, (err, primaryKey)=>{
+                            if(err) { return cb(err) ;}
+                            let hasPkValue = true ;
+                            if(Object.keys(record).length < primaryKey.length){
+                                hasPkValue = false;
+                            }
+                            for(let k of primaryKey){
+                                if(Object.keys(record).indexOf(k) === -1){
+                                    hasPkValue = false ;
+                                    break;
+                                }
+                            }
+                            if(hasPkValue){
+                                //has PK value
+                                tx.getByPk(table, record, (err, recordDb)=>{
+                                    if(err) { return cb(err) ;}
+                                    if(recordDb){
+                                        //already exists, update
+                                        tx.update(table, record, (err, updatedRecord)=>{
+                                            if(err){ return cb(err); }
+                                            recordCache[table] = updatedRecord ;
+                                            cb() ;
+                                        });
+                                    }else{
+                                        //not exists yet, insert
+                                        tx.insert(table, record, (err, insertedRecord)=>{
+                                            if(err){ return cb(err); }
+                                            recordCache[table] = insertedRecord ;
+                                            cb() ;
+                                        }) ;
+                                    }
+                                }) ;
+                            }else{
+                                //no pk in the record, insert
+                                tx.insert(table, record, (err, insertedRecord)=>{
+                                    if(err){ return cb(err); }
+                                    recordCache[table] = insertedRecord ;
+                                    cb() ;
+                                });
+                            }
+                        }) ;
+                    });
+                }
+            }
+            job.async(done) ;
+        }, callback) ;
+    }
+
+    /**
      * Get the columns of a table. Give back an array of columns definition
      * 
      * Note : result is cached so in the case you modify the table while application is running you should restart to see the modifications
@@ -585,40 +757,6 @@ class VeloxDbPgClient {
     };
 
     /**
-     * Do some actions in a database inside an unique transaction
-     * 
-     * @example
-     *          db.transaction("Insert profile and user",
-     *          function txActions(tx, done){
-     *              tx.query("...", [], (err, result) => {
-     *                   if(err){ return done(err); } //error handling
-     *
-     *                   //profile inserted, insert user
-     *                   tx.query("...", [], (err) => {
-     *                      if(err){ return done(err); } //error handling
-     *                      //finish succesfully
-     *                      done(null, "a result");
-     *                  });
-     *              });
-     *          },
-     *          function txDone(err, result){
-     *              if(err){
-     *              	return logger.error("Error !!", err) ;
-     *              }
-     *              logger.info("Success !!")
-     *          });
-     *
-     * @param {function({VeloxDbPgClient}, {function(err, result)})} callbackDoTransaction - function that do the content of the transaction receive tx should call done() on finish
-     * @param {function(err)} [callbackDone] - called when the transaction is finished
-     * @param {number} timeout - if this timeout (seconds) is expired, the transaction is automatically rollbacked.
-     *          If not set, default value is 30s. If set to 0, there is no timeout (not recomended)
-     *
-     */
-    tx(callbackDoTransaction, callbackDone, timeout){
-        this.transaction(callbackDoTransaction, callbackDone, timeout);
-    }
-
-    /**
      * Close the database connection
      */
     close() {
@@ -719,82 +857,6 @@ class VeloxDbPgBackend {
     }
 
 
-     /**
-     * Do some actions in a database inside an unique transaction
-     * 
-     * @example
-     *          db.transaction("Insert profile and user",
-     *          function txActions(tx, done){
-     *              tx.query("...", [], (err, result) => {
-     *                   if(err){ return done(err); } //error handling
-     *
-     *                   //profile inserted, insert user
-     *                   tx.query("...", [], (err) => {
-     *                      if(err){ return done(err); } //error handling
-     *                      //finish succesfully
-     *                      done(null, "a result");
-     *                  });
-     *              });
-     *          },
-     *          function txDone(err, result){
-     *              if(err){
-     *              	return logger.error("Error !!", err) ;
-     *              }
-     *              logger.info("Success !!")
-     *          });
-     *
-     * @param {function({VeloxDbPgClient}, {function(Error)})} callbackDoTransaction - function that do the content of the transaction receive tx should call done() on finish
-     * @param {function(Error)} [callbackDone] - called when the transaction is finished
-     * @param {number} timeout - if this timeout (seconds) is expired, the transaction is automatically rollbacked.
-     *          If not set, default value is 30s. If set to 0, there is no timeout (not recomended)
-     *
-     */
-    transaction(callbackDoTransaction, callbackDone, timeout){
-        this.open((err, client)=>{
-            if(err){ return callbackDone(err) ;}
-            client.transaction(callbackDoTransaction, (err)=>{
-                client.close() ;
-                if(err){ 
-                    return callbackDone(err) ;
-                }
-                callbackDone() ;
-            }, timeout) ;
-        }) ;
-    }
-
-    /**
-     * Do some actions in a database inside an unique transaction
-     * 
-     * @example
-     *          db.transaction("Insert profile and user",
-     *          function txActions(tx, done){
-     *              tx.query("...", [], (err, result) => {
-     *                   if(err){ return done(err); } //error handling
-     *
-     *                   //profile inserted, insert user
-     *                   tx.query("...", [], (err) => {
-     *                      if(err){ return done(err); } //error handling
-     *                      //finish succesfully
-     *                      done(null, "a result");
-     *                  });
-     *              });
-     *          },
-     *          function txDone(err, result){
-     *              if(err){
-     *              	return logger.error("Error !!", err) ;
-     *              }
-     *              logger.info("Success !!")
-     *          });
-     *
-     * @param {function({VeloxDbPgClient}, {function(Error)})} callbackDoTransaction - function that do the content of the transaction receive tx should call done() on finish
-     * @param {function(Error)} [callbackDone] - called when the transaction is finished
-     * @param {number} timeout - if this timeout (seconds) is expired, the transaction is automatically rollbacked.
-     *          If not set, default value is 30s. If set to 0, there is no timeout (not recomended)
-     *
-     */
-    tx(callbackDoTransaction, callbackDone, timeout){
-        this.transaction(callbackDoTransaction, callbackDone, timeout) ;
-    }
 }
 
 module.exports = VeloxDbPgBackend ;
