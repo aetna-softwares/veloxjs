@@ -17,6 +17,9 @@ class VeloxDbPgClient {
         this.connection = connection;
         this.closeCb = closeCb ;
         this.logger = logger ;
+
+        this._cachePk = {} ;
+        this._cacheColumns = {} ;
     }
 
     /**
@@ -88,6 +91,354 @@ class VeloxDbPgClient {
         }
         this.logger.debug("Run SQL "+sql+", params "+JSON.stringify(params)) ;
         this.connection.query(sql, params, callback) ;
+    }
+
+    /**
+     * Execute a query and give the first result back
+     * 
+     * Note : the query is not modified, you should add the LIMIT clause yourself !
+     * 
+     * @param {string} sql - SQL to execute
+     * @param {Array} [params] - Params
+     * @param {function(err, results)} callback - called when finished
+     */
+    queryFirst(sql, params, callback){
+        if(!callback && typeof(params) === "function"){
+            callback = params;
+            params = [];
+        }
+        this.query(sql, params, (err, results)=>{
+            if(err){ return callback(err); }
+            if(results.rows.length === 0){
+                return callback(null, null) ;
+            }
+            return callback(null, results.rows[0]) ;
+        }) ;
+    }
+
+    /**
+     * Get a record in the table by its pk
+     * 
+     * @example
+     * //get by simple pk
+     * client.getByPk("foo", "id", (err, fooRecord)=>{...})
+     * 
+     * //get with composed pk
+     * client.getByPk("bar", {k1: "valKey1", k2: "valKey2"}, (err, barRecord)=>{...})
+     * 
+     * //already have the record containing pk value, just give it...
+     * client.getByPk("bar", barRecordAlreadyHaving, (err, barRecordFromDb)=>{...})
+     * 
+     * @param {string} table the table name
+     * @param {any|object} pk the pk value. can be an object containing each value for composed keys
+     * @param {function(Error,object)} callback called with result. give null if not found
+     */
+    getByPk(table, pk, callback){
+        this.getPrimaryKey(table, (err, pkColumns)=>{
+            if(err){ return callback(err); }
+
+            if(pkColumns.length === 0){
+                return callback("Error searching in table "+table+", no primary column for this table") ;
+            }
+
+            //check given pk is consistent with table pk
+            if(typeof(pk) === "object"){
+                //the given pk has the form {col1: "", col2: ""}
+                if(Object.keys(pk).length !== pkColumns.length){
+                    return callback("Error searching in table "+table+", the given PK has "+Object.keys(pk).length+" properties but PK has "+pkColumns.length) ;
+                }
+                for(let k of pkColumns){
+                    if(Object.keys(pk).indexOf(k) === -1){
+                        return callback("Error searching in table "+table+", the given PK miss "+k+" property") ;
+                    }
+                }
+            }else{
+                //the given pk is a simple value, assuming simple PK form
+                if(pkColumns.length > 1){
+                    return callback("Error searching in table "+table+", the primary key should be composed of "+pkColumns.join(", "));
+                }
+                let formatedPk = {} ;
+                formatedPk[pkColumns[0]] = pk ;
+                pk = formatedPk ;
+            }
+
+            let where = [] ;
+            let params = [] ;
+            for(let k of pkColumns){
+                params.push(pk[k]) ;
+                where.push(k+" = $"+params.length) ;
+            }
+
+            let sql = `SELECT * FROM ${table} WHERE ${where.join(" AND ")}` ;
+
+            this.queryFirst(sql, params, callback) ;
+        }) ;
+    }
+
+
+    /**
+     * Insert a record in the table. Give back the inserted record (with potential generated values)
+     * 
+     * @param {string} table the table name
+     * @param {object} record the object to insert
+     * @param {function(Error, object)} callback called when insert is done. give back the inserted result (with potential generated values)
+     */
+    insert(table, record, callback){
+        if(!record) { return callback("Try to insert null record in table "+table) ; }
+        this.getColumnsDefinition(table, (err, columns)=>{
+            if(err){ return callback(err); }
+
+            let cols = [];
+            let values = [];
+            let params = [] ;
+            for(let c of columns){
+                if(record[c.column_name] !== undefined){
+                    cols.push(c.column_name) ;
+                    params.push(record[c.column_name]) ;
+                    values.push("$"+params.length) ;
+                }
+            }
+
+            if(cols.length === 0){
+                return callback("Can't found any column to insert in "+table+" from record "+JSON.stringify(record)) ;
+            }
+
+            let sql = `INSERT INTO ${table}(${cols.join(",")}) VALUES (${values.join(",")}) RETURNING *` ;
+
+            this.queryFirst(sql, params, callback) ;
+        }) ;
+    }
+
+    /**
+     * Update a record in the table. Give back the updated record (with potential generated values)
+     * 
+     * @param {string} table the table name
+     * @param {object} record the object to insert
+     * @param {function(Error, object)} callback called when insert is done. give back the updated result (with potential generated values)
+     */
+    update(table, record, callback){
+        if(!record) { return callback("Try to update null record in table "+table) ; }
+        this.getColumnsDefinition(table, (err, columns)=>{
+            if(err){ return callback(err); }
+            this.getPrimaryKey(table, (err, pkColumns)=>{
+                if(err){ return callback(err); }
+
+                //check PK
+                if(Object.keys(record).length < pkColumns.length){
+                    return callback("Error updating in table "+table+", the given record miss primary keys, expected : "+pkColumns.join(",")) ;
+                }
+                for(let k of pkColumns){
+                    if(Object.keys(record).indexOf(k) === -1){
+                        return callback("Error updating in table "+table+", the given record miss primary key "+k+" property") ;
+                    }
+                }
+
+                let sets = [];
+                let params = [] ;
+                for(let c of columns){
+                    if(record[c.column_name] !== undefined){
+                        params.push(record[c.column_name]) ;
+                        sets.push(c.column_name+" = $"+params.length) ;
+                    }
+                }
+                let where = [] ;
+                for(let k of pkColumns){
+                    params.push(record[k]) ;
+                    where.push(k+" = $"+params.length) ;
+                }
+
+                if(sets.length === 0){
+                    return callback("Can't found any column to update in "+table+" from record "+JSON.stringify(record)) ;
+                }
+
+                let sql = `UPDATE ${table} SET ${sets.join(",")} WHERE ${where.join(" AND ")}) RETURNING *` ;
+
+                this.queryFirst(sql, params, callback) ;
+            }) ;
+        }) ;
+    }
+
+    /**
+     * Helpers to do simple search in table
+     * 
+     * The search object can contains : 
+     * simple equals condition as {foo: "bar"}
+     * in condition as {foo: ["val1", "val2"]}
+     * ilike condition as {foo: "bar%"} (activated by presence of %)
+     * is null condition as {foo : null}
+     * more complex conditions must specify operand explicitely :
+     * {foo: {ope : ">", value : 1}}
+     * {foo: {ope : "<", value : 10}}
+     * {foo: {ope : "between", value : [from, to]}}
+     * {foo: {ope : "not in", value : ["", ""]}}
+     * 
+     * @param {string} table table name
+     * @param {object} search search object
+     * @param {string} [orderBy] order by clause
+     * @param {function(Error, Array)} callback called on finished. give back the found records
+     */
+    search(table, search, orderBy, callback){
+        this._prepareSearchQuery(table, search, orderBy, (err, sql, params)=>{
+            if(err){ return callback(err); }
+            this.query(sql, params, callback) ;
+        }) ;
+    }
+
+    /**
+     * Helpers to do simple search in table and return first found record
+     * 
+     * The search object can contains : 
+     * simple equals condition as {foo: "bar"}
+     * in condition as {foo: ["val1", "val2"]}
+     * ilike condition as {foo: "bar%"} (activated by presence of %)
+     * is null condition as {foo : null}
+     * more complex conditions must specify operand explicitely :
+     * {foo: {ope : ">", value : 1}}
+     * {foo: {ope : "<", value : 10}}
+     * {foo: {ope : "between", value : [from, to]}}
+     * {foo: {ope : "not in", value : ["", ""]}}
+     * 
+     * @param {string} table table name
+     * @param {object} search search object
+     * @param {string} [orderBy] order by clause
+     * @param {function(Error, Array)} callback called on finished. give back the first found records
+     */
+    searchFirst(table, search, orderBy, callback){
+        this._prepareSearchQuery(table, search, orderBy, (err, sql, params)=>{
+            if(err){ return callback(err); }
+            sql += " LIMIT 1" ;
+            this.query(sql, params, callback) ;
+        }) ;
+    }
+
+
+    /**
+     * Prepare the search SQL
+     * 
+     * @param {string} table table name
+     * @param {object} search search object
+     * @param {string} [orderBy] order by clause
+     * @param {function(Error, Array)} callback called on finished. give back the created sql and params
+     */
+    _prepareSearchQuery(table, search, orderBy, callback){
+        if(!search) { return callback("Try to search with null search in table "+table) ; }
+
+        if(typeof(orderBy) === "function"){
+            callback = orderBy;
+            orderBy = null;
+        }
+
+        this.getColumnsDefinition(table, (err, columns)=>{
+            if(err){ return callback(err); }
+
+            let where = [];
+            let params = [] ;
+            for(let c of columns){
+                if(search[c.column_name] !== undefined){
+                    let value = search[c.column_name] ;
+                    let ope = "=" ;
+                    if(typeof(value) === "object" && !Array.isArray(value)){
+                        ope = value.ope ;
+                        value = value.value ;
+                    }else{
+                        if(Array.isArray(value)){
+                            ope = "IN" ;
+                        }else if(value.indexOf("%") !== -1){
+                            ope = "ILIKE" ;
+                        }                        
+                    }
+
+                    if(ope.toUpperCase() === "IN" || ope.toUpperCase() === "NOT IN"){
+                        if(!Array.isArray(value) || value.length === 0){
+                            return callback("Search in table "+table+" failed. Search operand IN provided with no value. Expected an array with at least one value") ;
+                        }
+                        let wVals = [] ;
+                        for(let v of value){
+                            params.push(v) ;
+                            wVals.push("$"+params.length) ;
+                        }
+                        where.push(c.column_name+" "+ope+" ("+wVals.join(",")+")") ;
+                    } else if (ope.toUpperCase() === "BETWEEN"){
+                        if(!Array.isArray(value) || value.length !== 2){
+                            return callback("Search in table "+table+" failed. Search operand BETWEEN provided with wrong value. Expected an array with 2 values") ;
+                        }
+                        params.push(value[0]) ;
+                        params.push(value[1]) ;
+                        where.push(c.column_name+" BETWEEN $"+(params.length-1)+" AND $"+params.length) ;
+                    } else {
+                        //simple value ope
+                        if(ope === "=" && value === null){
+                            where.push(c.column_name+" IS NULL") ;
+                        }else{
+                            params.push(value) ;
+                            where.push(c.column_name+" "+ope+" $"+params.length) ;
+                        }
+                    }
+                }
+            }
+
+            let sql = `SELECT * FROM ${table} WHERE ${where.join("AND")}` ;
+            if(orderBy){
+                sql += ` ORDER BY ${orderBy}` ;
+            }
+            callback(null, sql, params) ;
+        });
+    }
+
+    /**
+     * Get the columns of a table. Give back an array of columns definition
+     * 
+     * Note : result is cached so in the case you modify the table while application is running you should restart to see the modifications
+     * 
+     * @param {string} table the table name
+     * @param {function(Error, Array)} callback called when found primary key, return array of column definitions
+     */
+    getColumnsDefinition(table, callback){
+        if(this._cacheColumns[table]){
+            return callback(null, this._cacheColumns[table]) ;
+        }
+        this.query(`SELECT column_name, udt_name, character_maximum_length, numeric_precision, datetime_precision
+                    FROM information_schema.columns t
+                JOIN information_schema.tables t1 on t.table_name = t1.table_name
+                    WHERE t.table_schema='public'
+                    AND t1.table_type = 'BASE TABLE' AND t.table_name = $1
+                    order by t.table_name, ordinal_position
+                    `, [table], (err, result)=>{
+            if(err){ return callback(err); }
+
+            this._cacheColumns[table] = result.rows ;
+            callback(null, this._cacheColumns[table]) ;
+        });
+    }
+
+    /**
+     * Get the primary key of a table. Give back an array of column composing the primary key
+     * 
+     * Note : result is cached so in the case you modify the table while application is running you should restart to see the modifications
+     * 
+     * @param {string} table the table name
+     * @param {function(Error, Array)} callback called when found primary key, return array of column names composing primary key
+     */
+    getPrimaryKey(table, callback){
+        if(this._cachePk[table]){
+            return callback(null, this._cachePk[table]) ;
+        }
+        this.query(`select kc.column_name 
+                    from  
+                        information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kc ON kc.table_name = tc.table_name and kc.table_schema = tc.table_schema
+                        and kc.constraint_name = tc.constraint_name
+                        JOIN information_schema.tables t on tc.table_name = t.table_name
+                    where 
+                        tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = $1
+                    `, [table], (err, result)=>{
+            if(err){ return callback(err); }
+
+            this._cachePk[table] = result.rows.map((r)=>{
+                return r.column_name ;
+            }) ;
+            callback(null, this._cachePk[table]) ;
+        });
     }
 
     /**
@@ -317,7 +668,7 @@ class VeloxDbPgBackend {
     /**
      * Get a database connection from the pool
      * 
-     * @param {function(err, client)} callback - Callback with VeloxDbPgClient instance
+     * @param {function(Error, VeloxDbPgClient)} callback - Callback with VeloxDbPgClient instance
      */
     open(callback){
         this.pool.connect((err, client, done) => {
@@ -365,6 +716,84 @@ class VeloxDbPgBackend {
                 callback() ;
             }
         }) ;
+    }
+
+
+     /**
+     * Do some actions in a database inside an unique transaction
+     * 
+     * @example
+     *          db.transaction("Insert profile and user",
+     *          function txActions(tx, done){
+     *              tx.query("...", [], (err, result) => {
+     *                   if(err){ return done(err); } //error handling
+     *
+     *                   //profile inserted, insert user
+     *                   tx.query("...", [], (err) => {
+     *                      if(err){ return done(err); } //error handling
+     *                      //finish succesfully
+     *                      done(null, "a result");
+     *                  });
+     *              });
+     *          },
+     *          function txDone(err, result){
+     *              if(err){
+     *              	return logger.error("Error !!", err) ;
+     *              }
+     *              logger.info("Success !!")
+     *          });
+     *
+     * @param {function({VeloxDbPgClient}, {function(Error)})} callbackDoTransaction - function that do the content of the transaction receive tx should call done() on finish
+     * @param {function(Error)} [callbackDone] - called when the transaction is finished
+     * @param {number} timeout - if this timeout (seconds) is expired, the transaction is automatically rollbacked.
+     *          If not set, default value is 30s. If set to 0, there is no timeout (not recomended)
+     *
+     */
+    transaction(callbackDoTransaction, callbackDone, timeout){
+        this.open((err, client)=>{
+            if(err){ return callbackDone(err) ;}
+            client.transaction(callbackDoTransaction, (err)=>{
+                client.close() ;
+                if(err){ 
+                    return callbackDone(err) ;
+                }
+                callbackDone() ;
+            }, timeout) ;
+        }) ;
+    }
+
+    /**
+     * Do some actions in a database inside an unique transaction
+     * 
+     * @example
+     *          db.transaction("Insert profile and user",
+     *          function txActions(tx, done){
+     *              tx.query("...", [], (err, result) => {
+     *                   if(err){ return done(err); } //error handling
+     *
+     *                   //profile inserted, insert user
+     *                   tx.query("...", [], (err) => {
+     *                      if(err){ return done(err); } //error handling
+     *                      //finish succesfully
+     *                      done(null, "a result");
+     *                  });
+     *              });
+     *          },
+     *          function txDone(err, result){
+     *              if(err){
+     *              	return logger.error("Error !!", err) ;
+     *              }
+     *              logger.info("Success !!")
+     *          });
+     *
+     * @param {function({VeloxDbPgClient}, {function(Error)})} callbackDoTransaction - function that do the content of the transaction receive tx should call done() on finish
+     * @param {function(Error)} [callbackDone] - called when the transaction is finished
+     * @param {number} timeout - if this timeout (seconds) is expired, the transaction is automatically rollbacked.
+     *          If not set, default value is 30s. If set to 0, there is no timeout (not recomended)
+     *
+     */
+    tx(callbackDoTransaction, callbackDone, timeout){
+        this.transaction(callbackDoTransaction, callbackDone, timeout) ;
     }
 }
 
