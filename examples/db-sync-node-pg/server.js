@@ -1,5 +1,6 @@
 const express = require('express');
 const app = express();
+const VeloxDatabaseExpress = require("../../database/server/src/VeloxDatabaseExpress");
 const VeloxDatabase = require("../../database/server/src/VeloxDatabase");
 const VeloxSqlSync = require("../../database/server/src/ext/VeloxSqlSync");
 
@@ -22,6 +23,10 @@ app.get('/', function (req, res) {
 }) ;
 
 app.use(express.static('public'));
+
+app.use("/db", express.static(path.join(__dirname, "..", "..", "database", "client", "src")));
+
+app.use("/crud", new VeloxDatabaseExpress(DB).middleware()) ;
 
 app.use('/velox/dbSync', function(req, res){
   let changeSet = req.body ;

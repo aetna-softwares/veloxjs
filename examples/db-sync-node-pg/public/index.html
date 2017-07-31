@@ -1,1 +1,70 @@
-<h1>DB Sync Node PG example</h1>
+<html>
+<head>
+
+    <script src="/db/VeloxDatabaseClient.js"></script>
+
+</head>
+<body>
+    <h1>DB Sync Node PG example</h1>
+
+
+    <script>
+        var db = new VeloxDatabaseClient({ serverUrl : "http://localhost:3000/crud/"}) ;
+
+        var uid = new Date().getTime()
+        db.insert("todo_list", {uid: uid, title: "my list"}, function(err){
+            if(err) { return console.log(err); }
+
+            db.update("todo_list", {uid: uid, title: "my listmodified "}, function(err){
+                if(err) { return console.log(err); }
+
+
+                db.getByPk("todo_list", uid, function(err, record){
+                    if(err) { return console.log(err); }
+
+                    console.log("record", record) ;
+
+                    db.remove("todo_list", record, function(err){
+                        if(err) { return console.log(err); }
+
+                        
+                        db.transactionalChanges([
+                            {
+                                table: "todo_list",
+                                record: {uid: uid, title: "my transaction list"}
+                            },
+                            {
+                                table: "todo_item",
+                                record: {uid: uid+"_1", list_uid: uid, title: "my first item"},
+                                action: "insert"
+                            },
+                            {
+                                table: "todo_item",
+                                record: {uid: uid+"_2", list_uid: "${todo_list.uid}", title: "my second item"},
+                                action: "insert"
+                            }
+                        ], function(err, result){
+                            if(err) { return console.log(err); }
+
+                            console.log("transaction results", result) ;
+
+                            db.search("todo_item", {title: "my second%"}, function(err, result){
+                                if(err) { return console.log(err); }
+
+                                console.log("search result", result) ;
+
+                                db.searchFirst("todo_item", {title: "my second%"}, "velox_version_table desc", function(err, result){
+                                    if(err) { return console.log(err); }
+                                    console.log("search first", result) ;
+                                }) ;
+                            }) ;
+                        }) ;
+                    }) ;      
+                }) ;  
+                
+            }) ;    
+        }) ;
+
+    </script>
+</body>
+</html>

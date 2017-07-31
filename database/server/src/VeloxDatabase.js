@@ -1,6 +1,7 @@
 const VeloxDbPgBackend = require("./backends/pg/VeloxDbPgBackend");
 const VeloxSqlUpdater = require("./VeloxSqlUpdater") ;
 const VeloxLogger = require("../../../helpers/VeloxLogger") ;
+const AsyncJob = require("../../../helpers/AsyncJob") ;
 /**
  * VeloxDatabase helps you to manage your database
  */
@@ -125,15 +126,46 @@ class VeloxDatabase {
         this.backend.open((err, client)=>{
             if(err){ return callbackDone(err); }
             try {
-                callbackDoInDb(client, (err)=>{
+                callbackDoInDb(client, function(err){
                     client.close() ;
                     if(err){ return callbackDone(err); }
-
                     callbackDone.apply(null, arguments) ;
                 }) ;
             } catch (error) {
                 client.close() ;
                 return callbackDone(error);
+            }
+        }) ;
+    }
+
+    /**
+     * Get the schema of the database. Result format is : 
+     * {
+     *      table1 : {
+     *          columns : [
+     *              {name : "", type: "", size: 123}
+     *          ],
+     *          pk: ["field1", field2]
+     *      },
+     *      table2 : {...s}
+     * }
+     * 
+     * Note : result is cached so in the case you modify the table while application is running you should restart to see the modifications
+     * 
+     * @param {function(Error,object)} callback 
+     */
+    getSchema(callback){
+        this.backend.open((err, client)=>{
+            if(err){ return callback(err); }
+            try {
+                client.getSchema((err, schema)=>{
+                    client.close() ;
+                    if(err){ return callback(err); }
+                    callback(null, schema) ;
+                }) ;
+            } catch (error) {
+                client.close() ;
+                return callback(error);
             }
         }) ;
     }
@@ -203,31 +235,144 @@ class VeloxDatabase {
      * Do a set of change in a transaction
      * 
      * The change set format is :
-     * {
-     *  changes : [
+     * [
      *      action: "insert" | "update" | "auto" ("auto" if not given)
      *      table : table name
      *      record: {record to sync}
-     *  ]
-     * }
+     * ]
      * 
      * your record can contain the special syntax ${table.field} it will be replaced by the field value from last insert/update on this table in the transaction
      * it is useful if you have some kind of auto id used as foreign key
      * 
      * @example
-     * {
-     *   changes : [
+     * [
      *      { table : "foo", record: {key1: "val1", key2: "val2"}, action: "insert"},
      *      { table : "bar", record: {foo_id: "${foo.id}", key3: "val3"}}
-     *   ]
-     * }
+     * ]
      * 
      * 
      * @param {object} changeSet the changes to do in this transaction 
      * @param {function(Error)} callback called on finish
      */
     transactionalChanges(changeSet, callback){
-        this.backend.transactionalChanges(changeSet, callback) ;
+        let results = [] ;
+        let recordCache = {};
+        let updatePlaceholder = (record)=>{
+            for(let k of Object.keys(record)){
+                if(record[k] && typeof(record[k]) === "string" && record[k].indexOf("${") === 0){
+                    //this record contains ${table.field} that must be replaced by the real value of last inserted record of this table                        
+                    let [othertable, otherfield] = record[k].replace("${", "").replace("}", "").split(".") ;
+                    if(recordCache[othertable]){
+                        record[k] = recordCache[othertable][otherfield] ;
+                    }
+                }
+            }
+        } ;
+        this.transaction((tx, done)=>{
+            let job = new AsyncJob(AsyncJob.SERIES) ;
+            
+            for(let change of changeSet){
+                let record = change.record ;
+                
+                let table = change.table ;
+                let action = change.action ;
+                if(action === "insert"){
+                    job.push((cb)=>{
+                        updatePlaceholder(record) ;
+                        tx.insert(table, record, (err, insertedRecord)=>{
+                            if(err){ return cb(err); }
+                            results.push({
+                                action: "insert",
+                                table : table,
+                                record: insertedRecord
+                            }) ;
+                            recordCache[table] = insertedRecord ;
+                            cb() ;
+                        }) ;
+                    });
+                }
+                if(action === "update"){
+                    job.push((cb)=>{
+                        updatePlaceholder(record) ;
+                        tx.update(table, record, (err, updatedRecord)=>{
+                            if(err){ return cb(err); }
+                            results.push({
+                                action: "update",
+                                table : table,
+                                record: updatedRecord
+                            }) ;
+                            recordCache[table] = updatedRecord ;
+                            cb() ;
+                        }) ;
+                    });
+                }
+                if(!action || action === "auto"){
+                    job.push((cb)=>{
+                        updatePlaceholder(record) ;
+                        tx.getPrimaryKey(table, (err, primaryKey)=>{
+                            if(err) { return cb(err) ;}
+                            let hasPkValue = true ;
+                            if(Object.keys(record).length < primaryKey.length){
+                                hasPkValue = false;
+                            }
+                            for(let k of primaryKey){
+                                if(Object.keys(record).indexOf(k) === -1){
+                                    hasPkValue = false ;
+                                    break;
+                                }
+                            }
+                            if(hasPkValue){
+                                //has PK value
+                                tx.getByPk(table, record, (err, recordDb)=>{
+                                    if(err) { return cb(err) ;}
+                                    if(recordDb){
+                                        //already exists, update
+                                        tx.update(table, record, (err, updatedRecord)=>{
+                                            if(err){ return cb(err); }
+                                            results.push({
+                                                action: "update",
+                                                table : table,
+                                                record: updatedRecord
+                                            }) ;
+                                            recordCache[table] = updatedRecord ;
+                                            cb() ;
+                                        });
+                                    }else{
+                                        //not exists yet, insert
+                                        tx.insert(table, record, (err, insertedRecord)=>{
+                                            if(err){ return cb(err); }
+                                            results.push({
+                                                action: "insert",
+                                                table : table,
+                                                record: insertedRecord
+                                            }) ;
+                                            recordCache[table] = insertedRecord ;
+                                            cb() ;
+                                        }) ;
+                                    }
+                                }) ;
+                            }else{
+                                //no pk in the record, insert
+                                tx.insert(table, record, (err, insertedRecord)=>{
+                                    if(err){ return cb(err); }
+                                    results.push({
+                                        action: "insert",
+                                        table : table,
+                                        record: insertedRecord
+                                    }) ;
+                                    recordCache[table] = insertedRecord ;
+                                    cb() ;
+                                });
+                            }
+                        }) ;
+                    });
+                }
+            }
+            job.async(done) ;
+        }, (err)=>{
+            if(err) { return callback(err) ;}
+            callback(null, results) ;
+        }) ;
     }
 
     /**
@@ -452,9 +597,11 @@ class VeloxDatabaseClient {
      * @param {string} table table name
      * @param {object} search search object
      * @param {string} [orderBy] order by clause
+     * @param {number} [offset] offset, default is 0
+     * @param {number} [limit] limit, default is no limit
      * @param {function(Error, Array)} callback called on finished. give back the found records
      */
-    search(table, search, orderBy, callback){ callback("not implemented"); }
+    search(table, search, orderBy, offset, limit, callback){ callback("not implemented"); }
 
     /**
      * Helpers to do simple search in table and return first found record
@@ -541,37 +688,6 @@ class VeloxDatabaseClient {
      *
      */
     transaction(callbackDoTransaction, callbackDone, timeout){ callbackDone("not implemented"); }
-
-
-    /**
-     * Do a set of change in a transaction
-     * 
-     * The change set format is :
-     * {
-     *  changes : [
-     *      action: "insert" | "update" | "auto" ("auto" if not given)
-     *      table : table name
-     *      record: {record to sync}
-     *  ]
-     * }
-     * 
-     * your record can contain the special syntax ${table.field} it will be replaced by the field value from last insert/update on this table in the transaction
-     * it is useful if you have some kind of auto id used as foreign key
-     * 
-     * @example
-     * 
-     * {
-     *   changes : [
-     *      { table : "foo", record: {key1: "val1", key2: "val2"}, action: "insert"},
-     *      { table : "bar", record: {foo_id: "${foo.id}", key3: "val3"}}
-     *   ]
-     * }
-     * 
-     * 
-     * @param {object} changeSet the changes to do in this transaction 
-     * @param {function(Error)} callback called on finish
-     */
-    transactionalChanges(changeSet, callback){ callback("not implemented"); }
 
 
     /**

@@ -144,7 +144,7 @@ class VeloxDbPgClient {
             //check given pk is consistent with table pk
             if(typeof(pk) === "object"){
                 //the given pk has the form {col1: "", col2: ""}
-                if(Object.keys(pk).length !== pkColumns.length){
+                if(Object.keys(pk).length < pkColumns.length){
                     return callback("Error searching in table "+table+", the given PK has "+Object.keys(pk).length+" properties but PK has "+pkColumns.length) ;
                 }
                 for(let k of pkColumns){
@@ -295,7 +295,7 @@ class VeloxDbPgClient {
                 let sets = [];
                 let params = [] ;
                 for(let c of columns){
-                    if(record[c.column_name] !== undefined){
+                    if(record[c.column_name] !== undefined && pkColumns.indexOf(c.column_name) === -1){
                         params.push(record[c.column_name]) ;
                         sets.push(c.column_name+" = $"+params.length) ;
                     }
@@ -310,7 +310,7 @@ class VeloxDbPgClient {
                     return callback("Can't found any column to update in "+table+" from record "+JSON.stringify(record)) ;
                 }
 
-                let sql = `UPDATE ${table} SET ${sets.join(",")} WHERE ${where.join(" AND ")}) RETURNING *` ;
+                let sql = `UPDATE ${table} SET ${sets.join(",")} WHERE ${where.join(" AND ")} RETURNING *` ;
 
                 this.queryFirst(sql, params, callback) ;
             }) ;
@@ -334,12 +334,17 @@ class VeloxDbPgClient {
      * @param {string} table table name
      * @param {object} search search object
      * @param {string} [orderBy] order by clause
+     * @param {number} [offset] offset, default is 0
+     * @param {number} [limit] limit, default is no limit
      * @param {function(Error, Array)} callback called on finished. give back the found records
      */
-    search(table, search, orderBy, callback){
-        this._prepareSearchQuery(table, search, orderBy, (err, sql, params)=>{
+    search(table, search, orderBy, offset, limit, callback){
+        this._prepareSearchQuery(table, search, orderBy, offset, limit, (err, sql, params)=>{
             if(err){ return callback(err); }
-            this.query(sql, params, callback) ;
+            this.query(sql, params, (err, result)=>{
+                if(err){ return callback(err); }
+                callback(null, result.rows) ;
+            }) ;
         }) ;
     }
 
@@ -363,10 +368,17 @@ class VeloxDbPgClient {
      * @param {function(Error, Array)} callback called on finished. give back the first found records
      */
     searchFirst(table, search, orderBy, callback){
-        this._prepareSearchQuery(table, search, orderBy, (err, sql, params)=>{
+        if(typeof(orderBy) === "function"){
+            callback = orderBy;
+            orderBy = null;
+        }
+        this.search(table, search, orderBy, 0, 1, (err, results)=>{
             if(err){ return callback(err); }
-            sql += " LIMIT 1" ;
-            this.query(sql, params, callback) ;
+            if(results.length === 0){
+                callback(null, null) ;
+            }else{
+                callback(null, results[0]) ;
+            }
         }) ;
     }
 
@@ -377,14 +389,25 @@ class VeloxDbPgClient {
      * @param {string} table table name
      * @param {object} search search object
      * @param {string} [orderBy] order by clause
+     * @param {number} [offset] offset
+     * @param {number} [limit] limit
      * @param {function(Error, Array)} callback called on finished. give back the created sql and params
      */
-    _prepareSearchQuery(table, search, orderBy, callback){
+    _prepareSearchQuery(table, search, orderBy, offset, limit, callback){
         if(!search) { return callback("Try to search with null search in table "+table) ; }
 
         if(typeof(orderBy) === "function"){
             callback = orderBy;
             orderBy = null;
+            offset = 0;
+            limit = null ;
+        } else if(typeof(offset) === "function"){
+            callback = offset;
+            offset = 0;
+            limit = null ;
+        } else if(typeof(limit) === "function"){
+            callback = limit;
+            limit = null ;
         }
 
         this.getColumnsDefinition(table, (err, columns)=>{
@@ -438,123 +461,113 @@ class VeloxDbPgClient {
 
             let sql = `SELECT * FROM ${table} WHERE ${where.join("AND")}` ;
             if(orderBy){
-                sql += ` ORDER BY ${orderBy}` ;
+                let colNames = columns.map((c)=>{ return c.column_name ;})
+                if(orderBy.split(",").every((ob)=>{
+                    //check we only receive a valid column name and asc/desc
+                    let col = ob.replace("DESC", "").replace("desc", "")
+                    .replace("ASC", "").replace("asc", "").trim() ;
+                    return colNames.indexOf(col) !== -1 ;
+                }) ){
+                    sql += ` ORDER BY ${orderBy}` ;
+                }else{
+                    return callback("Invalid order by clause "+orderBy) ;
+                }
+            }
+            if(limit) {
+                limit = parseInt(limit, 10) ;
+                if(!isNaN(limit)){
+                    sql += ` LIMIT ${limit}` ;
+                }else{
+                    return callback("Invalid limit clause "+limit) ;
+                }
+            }
+            if(offset) {
+                offset = parseInt(offset, 10) ;
+                if(!isNaN(offset)){
+                    sql += ` OFFSET ${offset}` ;
+                }else{
+                   return callback("Invalid offset clause "+offset) ;
+                }
             }
             callback(null, sql, params) ;
         });
     }
 
+
     /**
-     * Do a set of change in a transaction
-     * 
-     * The change set format is :
+     * Get the schema of the database. Result format is : 
      * {
-     *  changes : [
-     *      action: "insert" | "update" | "auto" ("auto" if not given)
-     *      table : table name
-     *      record: {record to sync}
-     *  ]
+     *      table1 : {
+     *          columns : [
+     *              {name : "", type: "", size: 123}
+     *          ],
+     *          pk: ["field1", field2]
+     *      },
+     *      table2 : {...s}
      * }
      * 
-     * your record can contain the special syntax ${table.field} it will be replaced by the field value from last insert/update on this table in the transaction
-     * it is useful if you have some kind of auto id used as foreign key
+     * Note : result is cached so in the case you modify the table while application is running you should restart to see the modifications
      * 
-     * @example
-     * 
-     * {
-     *   changes : [
-     *      { table : "foo", record: {key1: "val1", key2: "val2"}, action: "insert"},
-     *      { table : "bar", record: {foo_id: "${foo.id}", key3: "val3"}}
-     *   ]
-     * }
-     * 
-     * 
-     * @param {object} changeSet the changes to do in this transaction 
-     * @param {function(Error)} callback called on finish
+     * @param {function(Error,object)} callback 
      */
-    transactionalChanges(changeSet, callback){
-        this.transaction((tx, done)=>{
-            let job = new AsyncJob(AsyncJob.SERIES) ;
-            let recordCache = {};
-            for(let change of changeSet.changes){
-                let record = change.record ;
-                for(let k of Object.keys(record)){
-                    if(record[k] && record[k].indexOf("${") === 0){
-                        //this record contains ${table.field} that must be replaced by the real value of last inserted record of this table
-                        let [othertable, otherfield] = record[k].replace("${", "").replace("}", "").split(".") ;
-                        if(recordCache[othertable]){
-                            record[k] = recordCache[othertable][otherfield] ;
+    getSchema(callback){
+        if(this.schema){
+            return callback(null, this.schema) ;
+        }
+        this.query(`
+                SELECT t.table_name, column_name, udt_name, character_maximum_length, numeric_precision, datetime_precision
+                    FROM information_schema.columns t
+                JOIN information_schema.tables t1 on t.table_name = t1.table_name
+                    WHERE t.table_schema='public'
+                    AND t1.table_type = 'BASE TABLE'
+                    order by t.table_name, ordinal_position
+        `, [], (err, results)=>{
+            if(err){ return callback(err); }
+
+            let schema = {} ;
+            for(let r of results.rows){
+                
+                let table = schema[r.table_name] ;
+
+                if(!table){
+                    table = {
+                        columns: [],
+                        pk: []
+                    } ;
+                    schema[r.table_name] = table;
+                }
+                
+                delete r.table_name ;
+                table.columns.push({
+                    name: r.column_name,
+                    type: r.udt_name,
+                    size : r.character_maximum_length || r.numeric_precision || r.datetime_precision
+                }) ;
+            }
+
+            this.query( `
+                    select kc.column_name , t.table_name
+                    from  
+                        information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kc ON kc.table_name = tc.table_name and kc.table_schema = tc.table_schema
+                        and kc.constraint_name = tc.constraint_name
+                        JOIN information_schema.tables t on tc.table_name = t.table_name
+                    where 
+                        tc.constraint_type = 'PRIMARY KEY' 
+                    order by t.table_name, ordinal_position
+            `, [], (err, results)=>{
+                    if(err){ return callback(err); }
+                    for(let r of results.rows){
+                        let table = schema[r.table_name] ;
+                        if(table){
+                            table.pk.push(r.column_name) ;
                         }
                     }
-                }
-                let table = change.table ;
-                let action = change.action ;
-                if(action === "insert"){
-                    job.push((cb)=>{
-                        tx.insert(table, record, (err, insertedRecord)=>{
-                            if(err){ return cb(err); }
-                            recordCache[table] = insertedRecord ;
-                            cb() ;
-                        }) ;
-                    });
-                }
-                if(action === "update"){
-                    job.push((cb)=>{
-                        tx.update(table, record, (err, updatedRecord)=>{
-                            if(err){ return cb(err); }
-                            recordCache[table] = updatedRecord ;
-                            cb() ;
-                        }) ;
-                    });
-                }
-                if(!action || action === "auto"){
-                    job.push((cb)=>{
-                        this.getPrimaryKey(table, (err, primaryKey)=>{
-                            if(err) { return cb(err) ;}
-                            let hasPkValue = true ;
-                            if(Object.keys(record).length < primaryKey.length){
-                                hasPkValue = false;
-                            }
-                            for(let k of primaryKey){
-                                if(Object.keys(record).indexOf(k) === -1){
-                                    hasPkValue = false ;
-                                    break;
-                                }
-                            }
-                            if(hasPkValue){
-                                //has PK value
-                                tx.getByPk(table, record, (err, recordDb)=>{
-                                    if(err) { return cb(err) ;}
-                                    if(recordDb){
-                                        //already exists, update
-                                        tx.update(table, record, (err, updatedRecord)=>{
-                                            if(err){ return cb(err); }
-                                            recordCache[table] = updatedRecord ;
-                                            cb() ;
-                                        });
-                                    }else{
-                                        //not exists yet, insert
-                                        tx.insert(table, record, (err, insertedRecord)=>{
-                                            if(err){ return cb(err); }
-                                            recordCache[table] = insertedRecord ;
-                                            cb() ;
-                                        }) ;
-                                    }
-                                }) ;
-                            }else{
-                                //no pk in the record, insert
-                                tx.insert(table, record, (err, insertedRecord)=>{
-                                    if(err){ return cb(err); }
-                                    recordCache[table] = insertedRecord ;
-                                    cb() ;
-                                });
-                            }
-                        }) ;
-                    });
-                }
-            }
-            job.async(done) ;
-        }, callback) ;
+
+                    this.schema = schema ;
+                    callback(null, schema) ;
+            }) ;
+        }) ;
     }
 
     /**

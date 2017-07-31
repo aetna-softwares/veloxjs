@@ -65,7 +65,7 @@ class VeloxSqlUpdater {
      */
     getLastVersion() {
         if(this.changes.length === 0){ return 0; }
-        return this._getSortedChanges()[0].sinceVersion ;
+        return this._getSortedChanges().reverse()[0].sinceVersion ;
     }
 
     /**
