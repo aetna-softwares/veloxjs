@@ -152,7 +152,7 @@
      */
     function configureI18Next(options, callback) {
         if(options.i18next) {
-            i18next = options.i18next
+            i18next = options.i18next ;
         }
         if(!i18next) {
             //no i18next object exists, load from CDN

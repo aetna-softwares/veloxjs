@@ -81,13 +81,24 @@ class VeloxDatabaseExpress {
                     let table = urlParts[1] ;
                     
 
-                    if(table === "transactionalChanges"){
+                    if(this.db.expressExtensions[table]){
+                        this.db.expressExtensions[table].bind(this)(record, (err, result)=>{
+                            if(err){ return res.status(500).end(this._formatErr(err)) ; }
+                            res.status(200).json(result) ;
+                        }) ;
+                    } else if(table === "transactionalChanges"){
                         this.db.transactionalChanges(record, (err, modifiedRecord)=>{
                             if(err){ return res.status(500).end(this._formatErr(err)) ; }
                             res.status(200).json(modifiedRecord) ;
                         }) ;
                     } else if(table === "schema"){
                         res.status(200).json(schema) ;
+                    } else if(table === "multiread"){
+                        let reads = record;
+                        this.db.multiread(reads, (err, results)=>{
+                            if(err){ return res.status(500).end(this._formatErr(err)) ; }
+                            res.status(200).json(results) ;
+                        }) ;
                     } else {
                         if(!schema[table]){
                             return res.status(500).end("Unkown table "+table) ;

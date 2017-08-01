@@ -65,6 +65,16 @@ class VeloxDatabase {
                 });
             }
         }
+
+        //register express middleware action from extensions
+        this.expressExtensions = {} ;
+        for(let extension of VeloxDatabase.extensions){
+            if(extension.extendsExpress){
+                Object.keys(extension.extendsExpress).forEach((key)=> {
+                    this.expressExtensions[key] = extension.extendsExpress[key];
+                });
+            }
+        }
     }
 
     /**
@@ -229,6 +239,62 @@ class VeloxDatabase {
      */
     tx(callbackDoTransaction, callbackDone, timeout){ 
         this.transaction(callbackDoTransaction, callbackDone, timeout) ;
+    }
+
+    /**
+     * Do many reads in one time
+     * 
+     * @example
+     * //reads format 
+     * {
+     *      name1 : { pk : recordOk },
+     *      name2 : {search: {...}, orderBy : "", offset: 0, limit: 10}
+     *      name3 : {searchFirst: {...}, orderBy : ""}
+     * }
+     * 
+     * //returns will be
+     * {
+     *      name1 : { record },
+     *      name2 : [ records ],
+     *      name3 : { record }
+     * }
+     * 
+     * @param {object} reads object of search read to do
+     * @param {function(Error, object)} callback called with results of searches
+     */
+    multiread(reads, callback){
+        this.inDatabase((client, done)=>{
+            let job = new AsyncJob(AsyncJob.PARALLEL) ;
+            let results = {} ;
+            for(let k of Object.keys(reads)){
+                let r = reads[k] ;
+                job.push((cb)=>{
+                    if(r.pk){
+                        client.getByPk(r.table, r.pk, (err, record)=>{
+                            if(err){ return cb(err); }
+                            results[k] = record ;
+                            cb() ;
+                        }) ;
+                    }else if(r.search){
+                        client.search(r.table, r.search, r.orderBy. r.offset, r.limit, (err, records)=>{
+                            if(err){ return cb(err); }
+                            results[k] = records ;
+                            cb() ;
+                        }) ;
+                    }else if(r.searchFirst){
+                        client.searchFirst(r.table, r.searchFirst, r.orderBy, (err, record)=>{
+                            if(err){ return cb(err); }
+                            results[k] = record ;
+                            cb() ;
+                        }) ;
+                    }
+                }) ;
+            }
+            job.async((err)=>{
+                if(err){ return done(err) ;}
+                done(null, results) ;
+            }) ;
+        }, callback) ;
     }
 
     /**

@@ -33,6 +33,14 @@
             this.options.serverUrl+"/" ;
         }
 
+        var self = this ;
+        VeloxDatabaseClient.extensions.forEach(function(extension){
+            if(extension.extendsObj){
+                Object.keys(extension.extendsObj).forEach(function (key) {
+                        self[key] = extension.extendsObj[key];
+                });
+            }
+        })
     }
 
     /**
@@ -83,6 +91,12 @@
         }
     } ;
 
+    /**
+     * get database schema if not yet retrieved
+     * 
+     * @private
+     * @param {function(Error)} callback called on finished
+     */
     VeloxDatabaseClient.prototype._checkSchema = function(callback){
         if(this.schema){
             return callback() ;
@@ -316,6 +330,71 @@
         }.bind(this)) ;
         
     };
+
+    /**
+     * Do many reads in one time
+     * 
+     * @example
+     * //reads format 
+     * {
+     *      name1 : { pk : recordOk },
+     *      name2 : {search: {...}, orderBy : "", offset: 0, limit: 10}
+     *      name3 : {searchFirst: {...}, orderBy : ""}
+     * }
+     * 
+     * //returns will be
+     * {
+     *      name1 : { record },
+     *      name2 : [ records ],
+     *      name3 : { record }
+     * }
+     * 
+     * @param {object} reads object of search read to do
+     * @param {function(Error, object)} callback called with results of searches
+     */
+    VeloxDatabaseClient.prototype.multiread = function(reads, callback){
+        this._checkSchema(function(err){
+            if(err){ return callback(err); }
+            this._ajax(this.options.serverUrl+"multiread", "POST", {
+                reads
+            }, callback) ;    
+        }.bind(this)) ;
+        
+    };
+
+
+
+    /**
+     * contains extensions
+     */
+    VeloxDatabaseClient.extensions = [];
+
+    /**
+     * Register extensions
+     * 
+     * extension object should have : 
+     *  name : the name of the extension
+     *  extendsObj : object containing function to add to VeloxDatabaseClient instance
+     *  extendsProto : object containing function to add to VeloxDatabaseClient prototype
+     *  extendsGlobal : object containing function to add to VeloxDatabaseClient global object
+     * 
+     * @param {object} extension - The extension to register
+     */
+    VeloxDatabaseClient.registerExtension = function (extension) {
+            VeloxDatabaseClient.extensions.push(extension);
+
+            if (extension.extendsProto) {
+                Object.keys(extension.extendsProto).forEach(function (key) {
+                        VeloxDatabaseClient.prototype[key] = extension.extendsProto[key];
+                });
+            }
+            if (extension.extendsGlobal) {
+                Object.keys(extension.extendsGlobal).forEach(function (key) {
+                        VeloxDatabaseClient[key] = extension.extendsGlobal[key];
+                });
+            }
+    };
+
 
     return VeloxDatabaseClient;
 })));

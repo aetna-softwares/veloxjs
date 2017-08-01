@@ -22,9 +22,13 @@ app.get('/', function (req, res) {
   res.send('Hello World!');
 }) ;
 
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname,'public')));
+
+console.log(__dirname) ;
 
 app.use("/db", express.static(path.join(__dirname, "..", "..", "database", "client", "src")));
+app.use("/misc", express.static(path.join(__dirname, "..", "..", "client", "misc")));
+
 
 app.use("/crud", new VeloxDatabaseExpress(DB).middleware()) ;
 

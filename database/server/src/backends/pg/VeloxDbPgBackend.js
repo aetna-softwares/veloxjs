@@ -203,7 +203,7 @@ class VeloxDbPgClient {
             //check given pk is consistent with table pk
             if(typeof(pk) === "object"){
                 //the given pk has the form {col1: "", col2: ""}
-                if(Object.keys(pk).length !== pkColumns.length){
+                if(Object.keys(pk).length < pkColumns.length){
                     return callback("Error deleting in table "+table+", the given PK has "+Object.keys(pk).length+" properties but PK has "+pkColumns.length) ;
                 }
                 for(let k of pkColumns){
@@ -459,7 +459,11 @@ class VeloxDbPgClient {
                 }
             }
 
-            let sql = `SELECT * FROM ${table} WHERE ${where.join("AND")}` ;
+            let sql = `SELECT * FROM ${table}`;
+            if(where.length > 0){
+                sql += ` WHERE ${where.join("AND")}` ;
+            }
+             
             if(orderBy){
                 let colNames = columns.map((c)=>{ return c.column_name ;})
                 if(orderBy.split(",").every((ob)=>{

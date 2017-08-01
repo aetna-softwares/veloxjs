@@ -1,0 +1,21 @@
+{
+  "name": "db-sync-node-pg",
+  "homepage": "https://github.com/aetna-softwares/veloxjs",
+  "authors": [
+    "Olivier Oriol <olivier.oriol@aetna-softwares.com>"
+  ],
+  "description": "",
+  "main": "",
+  "license": "MIT",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "lokijs": "^1.5.0"
+  }
+}

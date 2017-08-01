@@ -53,6 +53,18 @@ class VeloxSqlSync{
                 self.applyChangeSet(this.backend, changeSet, callback) ;
             }
         } ;
+        this.extendsExpress = {
+            sync: function(changeSet, callback){
+                //this is the VeloxDatabaseExpress object, this.db is VeloxDatabase
+                self.applyChangeSet(this.db, changeSet, callback) ;
+            },
+            syncGetTime: function(date, callback){
+                //this is use to get the timelapse between client and server
+                var clientDate = new Date(date) ;
+                var serverDate = new Date() ;
+                callback(null, serverDate.getTime() - clientDate.getTime()) ;
+            }
+        } ;
     }
 
 
@@ -77,12 +89,15 @@ class VeloxSqlSync{
         db.transaction((tx, done)=>{
             let job = new AsyncJob(AsyncJob.SERIES) ;
             let changeDateTimestampMilli = new Date(changeSet.date).getTime() ;
-            let localTimeGap = changeSet.timeGap ;
-            changeDateTimestampMilli -= localTimeGap ;
+            let localTimeGap = changeSet.timeLapse ;
+            changeDateTimestampMilli += localTimeGap ;
             for(let change of changeSet.changes){
                 let record = change.record ;
                 let table = change.table ;
                 job.push((cb)=>{
+                    if(change.action === "remove"){
+                        return tx.remove(table, record, cb) ;
+                    }
                     tx.getByPk(table, record, (err, recordDb)=>{
                         if(err){ return cb(err); }
                         if(!recordDb){
@@ -112,7 +127,7 @@ class VeloxSqlSync{
                                         table_name: table, 
                                         table_uid: pkNames[0], 
                                         version_record: {ope: ">", value: record.velox_version_record-1}
-                                    }, "velox_version_record", (err, modifications)=>{
+                                    }, "version_record", (err, modifications)=>{
                                         if(err){ return cb(err); }
                                         
                                         let jobUpdateModif = new AsyncJob(AsyncJob.SERIES) ;

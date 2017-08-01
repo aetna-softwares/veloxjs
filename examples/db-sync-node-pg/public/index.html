@@ -1,7 +1,8 @@
 <html>
 <head>
-
+    <script src="/misc/VeloxScriptLoader.js"></script>
     <script src="/db/VeloxDatabaseClient.js"></script>
+    <script src="/db/ext/VeloxDbOfflineSync.js"></script>
 
 </head>
 <body>
@@ -40,7 +41,7 @@
                             },
                             {
                                 table: "todo_item",
-                                record: {uid: uid+"_2", list_uid: "${todo_list.uid}", title: "my second item"},
+                                record: {uid: uid+"_2", list_uid: uid, title: "my second item"},
                                 action: "insert"
                             }
                         ], function(err, result){
@@ -56,6 +57,10 @@
                                 db.searchFirst("todo_item", {title: "my second%"}, "velox_version_table desc", function(err, result){
                                     if(err) { return console.log(err); }
                                     console.log("search first", result) ;
+
+                                    db.sync(function(err){
+                                        if(err) { return console.log(err); }
+                                    }) ;
                                 }) ;
                             }) ;
                         }) ;
