@@ -1,6 +1,7 @@
 ; (function (global, factory) {
     if (typeof exports === 'object' && typeof module !== 'undefined') {
-
+        var VeloxScriptLoader = require("velox-scriptloader") ;
+        module.exports = factory(VeloxScriptLoader) ;
     } else if (typeof define === 'function' && define.amd) {
         define(['VeloxScriptLoader'], factory);
     } else {
@@ -415,7 +416,7 @@
                 " in your import scripts or give i18next object to VeloxWebView.i18n.configure function");
 
             if (!VeloxScriptLoader) {
-                console.error("To have automatic script loading, you need to import VeloxScriptLoader");
+               return console.error("To have automatic script loading, you need to import VeloxScriptLoader");
             }
 
             VeloxScriptLoader.load(LOKIJS_LIB, function (err) {

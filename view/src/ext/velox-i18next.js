@@ -1,12 +1,42 @@
 ; (function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
-    typeof define === 'function' && define.amd ? define(factory) :
-    global.VeloxWebView.registerExtension(factory())
-}(this, (function () { 'use strict';
+        if (typeof exports === 'object' && typeof module !== 'undefined') {
+        var VeloxScriptLoader = require("velox-scriptloader") ;
+        module.exports = factory(VeloxScriptLoader) ;
+    } else if (typeof define === 'function' && define.amd) {
+        define(['VeloxScriptLoader'], factory);
+    } else {
+        global.VeloxWebView.registerExtension(factory(global.VeloxScriptLoader));
+    }
+}(this, (function (VeloxScriptLoader) { 'use strict';
 
     var I18NEXT_VERSION = "8.4.3" ;
     var I18NEXT_XHR_VERSION = "1.4.2";
     var I18NEXT_BROWSER_DETECT_VERSION = "2.0.0";
+
+    var I18NEXT_LIB = [
+        {
+            name: "i18next",
+            type: "js",
+            version: I18NEXT_VERSION,
+            cdn: "https://unpkg.com/i18next@$VERSION/i18next.js",
+            bowerPath: "i18next/i18next.min.js"
+        },
+        {
+            name: "i18next-xhr-backend",
+            type: "js",
+            version: I18NEXT_XHR_VERSION,
+            cdn: "https://unpkg.com/i18next-xhr-backend@$VERSION/i18nextXHRBackend.js",
+            bowerPath: "i18next-xhr-backend/i18nextXHRBackend.min.js"
+        },
+        {
+            name: "i18next-browser-languagedetector",
+            type: "js",
+            version: I18NEXT_BROWSER_DETECT_VERSION,
+            cdn: "https://unpkg.com/i18next-browser-languagedetector@$VERSION/i18nextBrowserLanguageDetector.js",
+            bowerPath: "i18next-browser-languagedetector/i18nextBrowserLanguageDetector.min.js"
+        }
+    ];
+
 
     /**
      * object that contains i18next instance, by default try to get the global variable
@@ -17,6 +47,11 @@
      * check if we did the initialization of i18next
      */
     var i18nextInitDone = false ;
+
+    /**
+     * list of listener waiting for i18next to finish
+     */
+    var initListeners = [] ;
 
     /**
      * i18next extension definition
@@ -86,6 +121,20 @@
     extension.extendsGlobal.i18n.setLang = function(lang, callback){
         return setLang(lang, callback) ;
     } ;
+    /**
+     * get the current lang 
+     */
+    extension.extendsGlobal.i18n.getLang = function(){
+        return getLang() ;
+    } ;
+
+    /**
+     * 
+     */
+    extension.extendsGlobal.i18n.onLanguageChanged = function(listener){
+        onLanguageChanged(listener) ;
+    } ;
+    
             
     extension.extendsGlobal.tr = extension.extendsProto.tr ;
 
@@ -116,34 +165,6 @@
         }
     }
 
-    /**
-     * load script from CDN
-     * 
-     * @private
-     */
-    function loadScript (path, callback) {
-		var script = document.createElement("script");
-	    script.async = true;
-	    script.type = "text/javascript";
-	    script.src = path;
-	    script.onload = function(_, isAbort) {
-	        if (!script.readyState || "complete" === script.readyState) {
-	            if (isAbort){
-					callback("aborted") ;
-	            }else{
-	                callback() ;
-				}
-	        }
-	    };
-		
-		script.onreadystatechange = script.onload ;
-		
-	    script.onerror = function (ev) { 
-			callback(ev); 
-		};
-		
-	    document.getElementsByTagName("head")[0].appendChild(script);
-	};
 
     /**
      * configure i18next
@@ -155,21 +176,19 @@
             i18next = options.i18next ;
         }
         if(!i18next) {
-            //no i18next object exists, load from CDN
-            console.debug("No i18next object given, we will load from CDN. If you don't want this, include i18next "+I18NEXT_VERSION+
+            //no i18next object exists, load from CDN/bower
+            console.debug("No i18next object given, we will load from CDN/bower. If you don't want this, include i18next "+I18NEXT_VERSION+
                 " in your import scripts or give i18next object to VeloxWebView.i18n.configure function");
 
-            loadScript("https://unpkg.com/i18next@"+I18NEXT_VERSION+"/i18next.js", function(err){
+            if (!VeloxScriptLoader) {
+                return callback("To have automatic script loading, you need to import VeloxScriptLoader");
+            }
+
+            VeloxScriptLoader.load(I18NEXT_LIB, function(err){
                 if(err){ return callback(err); }
-                loadScript("https://unpkg.com/i18next-xhr-backend@"+I18NEXT_XHR_VERSION+"/i18nextXHRBackend.js", function(err){
-                    if(err){ return callback(err); }
-                    loadScript("https://unpkg.com/i18next-browser-languagedetector@"+I18NEXT_BROWSER_DETECT_VERSION+"/i18nextBrowserLanguageDetector.js", function(err){
-                        if(err){ return callback(err); }
-                        i18next = window.i18next ;
-                        initI18Next(options, callback);
-                    });
-                });
-            });
+                i18next = window.i18next ;
+                initI18Next(options, callback);
+            }) ;
         } else {
             initI18Next(options, callback);
         }
@@ -186,25 +205,40 @@
             backend: {
                 loadPath: 'locales/{{lng}}.json',
             }
-        }
+        } ;
         Object.keys(options).forEach(function(k){
             opts[k] = options[k] ;
         }) ;
 
-        if(i18nextXHRBackend){
-            i18next.use(i18nextXHRBackend)
+        if(window.i18nextXHRBackend){
+            i18next.use(window.i18nextXHRBackend);
         }
-        if(i18nextBrowserLanguageDetector){
-            i18next.use(i18nextBrowserLanguageDetector)
+        if(window.i18nextBrowserLanguageDetector){
+            i18next.use(window.i18nextBrowserLanguageDetector);
         }
         i18next.init(opts, function(err){
             i18nextInitDone = true ;
-            console.debug("i18next init done")
+            console.debug("i18next init done") ;
             if(err){
                 return callback(err) ;
             }
+
+            initListeners.forEach(function(l){
+                l() ;
+            }) ;
+            initListeners = [] ;
+
             callback() ;
         });
+    }
+
+    /**
+     * Ensure the i18next is initialized
+     * @param {function} callback called when i18n is done
+     */
+    function ensureInit(callback){
+        if(i18next){ return callback() ;}
+        initListeners.push(callback) ;
     }
 
     /**
@@ -216,11 +250,32 @@
         if(!callback){
             callback = function(){} ;
         }
-        if(!i18next){
-            console.error("i18next is not yet initialized")
-            return callback("i18next is not yet initialized")
+        ensureInit(function(){
+            i18next.changeLanguage(lang, callback);    
+        }) ;
+    }
+
+    /**
+     * Get the current language
+     */
+    function getLang(){
+        if(i18next){
+            return i18next.language ;
+        }else{
+            return navigator.language || navigator.userLanguage ;
         }
-        i18next.changeLanguage(lang, callback);
+    }
+
+    /**
+     * Add a listener on language change
+     * 
+     * @param {function({string})} listener called when language changed, it receive the new language code
+     */
+    function onLanguageChanged(listener){
+        ensureInit(function(){
+            i18next.on("languageChanged", listener) ;
+        }) ;
+        
     }
     
     /**

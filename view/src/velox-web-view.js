@@ -324,7 +324,7 @@
          *   staticCSS : use this CSS instead of fetch CSS file
          * 
          * @param {object} options - The options
-         * @param {function} [callback] - Called when init is done
+         * @param {function(Error)} [callback] - Called when init is done
          */
         VeloxWebView.prototype.init = function (options, callback) {
                 this.container = options.container;
@@ -334,7 +334,13 @@
                 this.staticHTML = options.html;
                 this.staticCSS = options.css;
 
-                if (!callback) { callback = function () { }; }
+                if (!callback) { callback = function (err) { 
+                        
+                        if(err){ 
+                                console.error("Unexpected error", err) ;
+                                throw "Unexpected error "+err ; 
+                        }
+                }; }
 
                 if (this.initDone) {
                         //already init
@@ -420,8 +426,8 @@
                                         }
                                 }).bind(this));
 
-                                asyncSeries(calls, (function () {
-                                        callback();
+                                asyncSeries(calls, (function (err) {
+                                        callback(err);
                                 }).bind(this));
                         }).bind(this));
                 }).bind(this));
@@ -597,12 +603,18 @@
                         var el = boundEl.el;
                         var bindPath = boundEl.bindPath;
                         var bindData = pathExtract(baseData, bindPath);
-                        if (bindData === null || bindData === undefined) {
-                                bindData = "";
-                        }
-                        if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
+                        
+                        if (el.veloxSetValue){
+                                el.veloxSetValue(bindData) ;
+                        }else if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
+                                if (bindData === null || bindData === undefined) {
+                                        bindData = "";
+                                }
                                 el.value = bindData;
                         } else {
+                                if (bindData === null || bindData === undefined) {
+                                        bindData = "";
+                                }
                                 el.innerHTML = bindData;
                         }
                 }).bind(this));
@@ -678,10 +690,16 @@
                 this.boundElements.forEach((function (boundEl) {
                         var el = boundEl.el;
                         var bindPath = boundEl.bindPath;
-                        if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
-                                var value = el.value;
+                        var value = undefined;
+                        if (el.veloxGetValue){
+                                value = el.veloxGetValue();
+                        }else if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
+                                value = el.value;
+                        }
+                        if(value !== undefined){
                                 pathSetValue(baseData, bindPath, value);
                         }
+                        
                 }).bind(this));
 
                 //set sub views

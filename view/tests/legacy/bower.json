@@ -1,0 +1,30 @@
+{
+  "name": "velox-test-legacy",
+  "homepage": "https://github.com/aetna-softwares/veloxjs",
+  "authors": [
+    "Olivier Oriol <olivier.oriol@aetna-softwares.com>"
+  ],
+  "description": "",
+  "main": "",
+  "license": "MIT",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "inputmask": "^3.3.7",
+    "i18next": "^8.4.3",
+    "i18next-xhr-backend": "^1.4.2",
+    "i18next-browser-languagedetector": "^2.0.0",
+    "decimal.js-light": "https://github.com/MikeMcl/decimal.js-light.git#2.2.0",
+    "flatpickr": "flatpickr-calendar#3.0.5-1",
+    "moment": "momentjs#^2.18.1"
+  },
+  "resolutions": {
+    "flatpickr": "3.0.5-1"
+  }
+}

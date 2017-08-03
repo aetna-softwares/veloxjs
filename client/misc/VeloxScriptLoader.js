@@ -138,7 +138,8 @@
                 return this.addLoadListener(libDef.name, listener) ;
 			}
 			this.loadingScripts[libDef.name] = new Date() ;
-			this.loadScript(url, function(){
+			this.loadScript(url, function(err){
+                if(err){ return callback(err) ;}
 				this.loadedScripts[libDef.name] = new Date() ;
 				delete this.loadingScripts[libDef.name] ;
 				this._emitLoad(libDef.name) ;
@@ -226,7 +227,8 @@
 				this._loadFiles(l, cb) ;
 			}.bind(this)) ;
 		}.bind(this)) ;
-		series(calls, function(){
+		series(calls, function(err){
+            if(err){ return callback(err) ;}
 			this.loadInProgress-- ;
 			callback() ;
 		}.bind(this)) ;
@@ -269,6 +271,7 @@
                             callback(err) ;
                             done = true ;
                         }
+                        return;
                     }
                     workers -- ;
                     if(workers === 0){
@@ -287,6 +290,7 @@
      * @param {function(Error)} callback called when all calls are done
      */
     var series = function(calls, callback){
+        if(calls.length === 0){ return callback(); }
         calls = calls.slice() ;
         var doOne = function(){
             var call = calls.shift() ;
