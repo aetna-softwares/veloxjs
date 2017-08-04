@@ -30,6 +30,7 @@
         this.loadedScripts = {} ;
 	    this.loadingScripts = {} ;
         this.loadedCSS = {} ;
+        this.loadedJSON = {} ;
         this.loadListeners = {} ;
         this.loadInProgress = 0 ;
 
@@ -113,17 +114,20 @@
         
         var url = this.options.bowerPath+libDef.bowerPath ;
 		if(this.options.policy === "cdn"){
-            url = libDef.cdn.replace("$VERSION", libDef.version) ;
+            url = libDef.cdn;
         }
+        url = url.replace("$VERSION", libDef.version) ;
 		if(libDef.type === "css"){
 			if(this.loadedCSS[libDef.name]){
 				return callback() ;
 			}
 			this.loadedCSS[libDef] = new Date() ;
 			this.loadCss(url, function(){
-                this._emitLoad(libDef.name) ;
+                this._emitLoad(libDef.Oname) ;
 				callback() ;
 			}.bind(this));
+		}else if(libDef.type === "json"){
+            this.loadJSON(url, callback) ;
 		}else{
 			if(this.loadedScripts[libDef.name]){
 				//already loaded
@@ -180,6 +184,38 @@
     } ;
 
     /**
+     * Load a JSON
+     * 
+     * @param {string} url the url of the script
+     * @param {function(Error)} callback called when script is loaded
+     */
+    VeloxScriptLoader.prototype.loadJSON = function (url, callback) {
+        if(this.loadedJSON[url]){
+            return callback(null, this.loadedJSON[url]) ;
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", url);
+        xhr.onreadystatechange = (function () {
+            
+            if (xhr.readyState === 4){
+                var responseResult = xhr.responseText ;
+                if(responseResult){
+                    try{
+                        responseResult = JSON.parse(responseResult) ;
+                    }catch(e){}
+                }
+                if(xhr.status >= 200 && xhr.status < 300) {
+                    this.loadedJSON[url] = responseResult ;
+                    callback(null, responseResult);
+                } else {
+                    callback(responseResult||xhr.status);
+                }
+            } 
+        }).bind(this);
+        xhr.send();
+    } ;
+
+    /**
      * Load a CSS
      * 
      * @param {string} url the url of CSS fiel
@@ -221,16 +257,16 @@
         
         libs = JSON.parse(JSON.stringify(libs)) ;
 
-		var calls = [function(cb){cb() ;}] ;
+		var calls = [] ;
 		libs.forEach(function(l){
 			calls.push(function(cb){
 				this._loadFiles(l, cb) ;
 			}.bind(this)) ;
 		}.bind(this)) ;
-		series(calls, function(err){
+		series(calls, function(err, results){
             if(err){ return callback(err) ;}
 			this.loadInProgress-- ;
-			callback() ;
+			callback(null, results) ;
 		}.bind(this)) ;
     } ;
 
@@ -245,7 +281,7 @@
 		if(!Array.isArray(libDef)){
 			libDef = [libDef] ;
 		}
-		var calls = [function(cb){cb() ;}] ;
+		var calls = [] ;
 		libDef.forEach(function(l){
 			calls.push(function(cb){
 				this.loadOneFile(l, cb) ;
@@ -263,9 +299,10 @@
     var parallel = function(calls, callback){
         var workers = calls.length ;
         var done = false;
-        calls.forEach(function(call){
+        var results = [] ;
+        calls.forEach(function(call, i){
             if(!done){
-                call(function(err){
+                call(function(err, result){
                     if(err){
                         if(!done){
                             callback(err) ;
@@ -273,10 +310,11 @@
                         }
                         return;
                     }
+                    results[i] = result ;
                     workers -- ;
                     if(workers === 0){
                         done = true ;
-                        callback() ;
+                        callback(null, results) ;
                     }
                 }) ;
             }
@@ -292,12 +330,14 @@
     var series = function(calls, callback){
         if(calls.length === 0){ return callback(); }
         calls = calls.slice() ;
+        var results = [] ;
         var doOne = function(){
             var call = calls.shift() ;
-            call(function(err){
+            call(function(err, result){
                 if(err){ return callback(err) ;}
+                results.push(result) ;
                 if(calls.length === 0){
-                    callback() ;
+                    callback(null, results) ;
                 }else{
                     doOne() ;
                 }

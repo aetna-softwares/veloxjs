@@ -86,7 +86,7 @@
      * @return {string} - The translated string in current language
      */      
     extension.extendsProto.tr = function(trKey, params){
-        return translate.apply(this, arguments)
+        return translate.apply(this, arguments) ;
     } ;
             
     extension.extendsGlobal = {} ;
@@ -135,7 +135,8 @@
         onLanguageChanged(listener) ;
     } ;
     
-            
+    extension.extendsGlobal.i18n.tr = extension.extendsProto.tr ;
+    
     extension.extendsGlobal.tr = extension.extendsProto.tr ;
 
     /**

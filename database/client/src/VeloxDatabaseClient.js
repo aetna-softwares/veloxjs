@@ -66,13 +66,14 @@
         xhr.setRequestHeader("Content-type", "application/json");
 
         xhr.onreadystatechange = (function () {
-            var responseResult = xhr.responseText ;
-            if(responseResult){
-                try{
-                    responseResult = JSON.parse(responseResult) ;
-                }catch(e){}
-            }
+            
             if (xhr.readyState === 4){
+                var responseResult = xhr.responseText ;
+                if(responseResult){
+                    try{
+                        responseResult = JSON.parse(responseResult) ;
+                    }catch(e){}
+                }
                 if(xhr.status >= 200 && xhr.status < 300) {
                     callback(null, responseResult);
                 } else {
@@ -385,7 +386,7 @@
 
             if (extension.extendsProto) {
                 Object.keys(extension.extendsProto).forEach(function (key) {
-                        VeloxDatabaseClient.prototype[key] = extension.extendsProto[key];
+              L          VeloxDatabaseClient.prototype[key] = extension.extendsProto[key];
                 });
             }
             if (extension.extendsGlobal) {

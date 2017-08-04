@@ -16,33 +16,72 @@
     var extension = {} ;
     extension.name = "velox-fields" ;
 
+    /**
+     * contains loaded libs
+     */
     var libs = {} ;
+
+    /**
+     * the current locale
+     */
     var currentLocale = null ;
+
+    /**
+     * flag for CSS of switch widget
+     */
     var switchCSSLoaded = false;
 
+    /**
+     * called on view init
+     */
     extension.init = function(cb){
         var view = this ;
         doInitView.bind(view)(cb) ;
     } ;
     extension.extendsGlobal = {} ;
 
+    /**
+     * Global object to access to fields configuration
+     */
     extension.extendsGlobal.fields = {
+        /**
+         * load configuration
+         * 
+         * The options object should contains a libs property with instance of libraries object 
+         * if they are not available from window object and you don't want them to be loaded by CDN/bower
+         * 
+         * @param {object} options the configuration options
+         */
         configure : function(options){
             if(options.libs) {
                 Object.keys(options.libs).forEach(function(k){
                     libs[k] = options.libs[k] ;
                 }) ;
             }
+        },
+        /**
+         * Create the field
+         * 
+         * @param {HTMLElement} element the HTML element to transform to field
+         * @param {string} fieldType the field type
+         * @param {string} fieldSize the field size
+         * @param {object} fieldOptions field options map (from element attributes)
+         * @param {function(Error)} callback called when the field is created
+         */
+        createField: function(element, fieldType, fieldSize, fieldOptions, callback){
+            createField(element, fieldType, fieldSize, fieldOptions, callback) ;
         }
     } ;
 
-
+    ///// DEPENDENCIES LIBRARIES LOADING ////////
     var INPUTMASK_VERSION = "3.3.7"; //v4 will drop jquery dependency 
     var JQUERY_VERSION = "3.2.1" ;
     var NUMBRO_VERSION = "1.11.0" ;
     var DECIMALJS_VERSION = "2.2.0" ;
     var FLATPICKR_VERSION = "3.0.5-1" ;
     var MOMENTJS_VERSION = "2.18.1" ;
+    var SELECT2_VERSION = "4.0.3" ;
+    var W2UI_VERSION = "1.5.rc1" ;
 
     var JQUERY_LIB = {
         name: "jquery",
@@ -106,6 +145,50 @@
         }
     ];
 
+    var SELECT2_LIB = [
+        JQUERY_LIB,
+        {
+            name: "select2-css",
+            type: "css",
+            version: SELECT2_VERSION,
+            cdn: "https://cdnjs.cloudflare.com/ajax/libs/select2/$VERSION/css/select2.min.css",
+            bowerPath: "select2/dist/css/select2.min.css"
+        },
+        {
+            name: "select2-js",
+            type: "js",
+            version: SELECT2_VERSION,
+            cdn: "https://cdnjs.cloudflare.com/ajax/libs/select2/$VERSION/js/select2.min.js",
+            bowerPath: "select2/dist/js/select2.min.js"
+        }
+    ];
+
+    var W2UI_LIB = [
+        JQUERY_LIB,
+        {
+            name: "w2ui-css",
+            type: "css",
+            version: W2UI_VERSION,
+            
+            cdn: "http://rawgit.com/vitmalina/w2ui/master/dist/w2ui.min.css",
+            bowerPath: "w2ui/dist/w2ui.min.css"
+        },
+        {
+            name: "w2ui-js",
+            type: "js",
+            version: W2UI_VERSION,
+            cdn: "http://rawgit.com/vitmalina/w2ui/master/dist/w2ui.min.js",
+            bowerPath: "w2ui/dist/w2ui.min.js"
+        }
+    ];
+
+    /**
+     * Translate the locale code in flatpicker naming conviention
+     * 
+     * Fallback to default US locale if lang not found
+     * 
+     * @param {string} lang the lang code from current locale
+     */
     function flatpickerLocaleCode(lang){
         var availableLocales = ["ar", "bg", "bn", "cat", "cs", "cy", "da", "de", "eo", "es", "et", "fa", "fi", "fr", "gr", "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "lt", "lv", "mk", "ms", "my", "nl", "no", "pa", "pl", "pt", "ro", "ru", "si", "sk", "sl", "sq", "sr", "sv", "th", "tr", "uk", "vn", "zh"];
 
@@ -116,7 +199,14 @@
         return "" ;
     }
 
-     function momentLocaleCode(lang){
+    /**
+     * Translate the locale code in moment naming conviention
+     * 
+     * Fallback to default US locale if lang not found
+     * 
+     * @param {string} lang the lang code from current locale
+     */
+    function momentLocaleCode(lang){
         var availableLocales = ["af", "ar-dz", "ar", "ar-kw", "ar-ly", "ar-ma", "ar-sa", "ar-tn", "az", "be", "bg", "bn", "bo", "br", "bs", "ca", "cs", "cv", "cy", "da", "de-at", "de-ch", "de", "dv", "el", "en-au", "en-ca", "en-gb", "en-ie", "en-nz", "eo", "es-do", "es", "et", "eu", "fa", "fi", "fo", "fr-ca", "fr-ch", "fr", "fy", "gd", "gl", "gom-latn", "he", "hi", "hr", "hu", "hy-am", "id", "is", "it", "ja", "jv", "ka", "kk", "km", "kn", "ko", "ky", "lb", "lo", "lt", "lv", "me", "mi", "mk", "ml", "mr", "ms", "ms-my", "my", "nb", "ne", "nl-be", "nl", "nn", "pa-in", "pl", "pt-br", "pt", "ro", "ru", "sd", "se", "si", "sk", "sl", "sq", "sr-cyrl", "sr", "ss", "sv", "sw", "ta", "te", "tet", "th", "tlh", "tl-ph", "tr", "tzl", "tzm", "tzm-latn", "uk", "ur", "uz", "uz-latn", "vi", "x-pseudo", "yo", "zh-cn", "zh-hk", "zh-tw"];
         lang = lang.replace("_", "-").toLowerCase() ;
 
@@ -127,6 +217,59 @@
         return "en-us" ;
     }
 
+    /**
+     * Translate the locale code in w2ui naming conviention
+     * 
+     * Fallback to default US locale if lang not found
+     * 
+     * @param {string} lang the lang code from current locale
+     */
+    function w2uiLocaleCode(lang){
+        var availableLocales = ["az-az", "ba-ba", "bg-bg", "ca-es", "de-de", "en-gb", "en-us", "es-es", "es-mx", "fr-fr", "gl-es", "hr-hr", "hu-hu", "id-id", "it-it", "ja-jp", "ko-kr", "lt-lt", "nl-nl", "no-no", "pl-pl", "pt-br", "ru-ru", "sk-sk", "sl-si", "tr-tr", "zh-cn"];
+        lang = lang.replace("_", "-").toLowerCase() ;
+
+        if(availableLocales.indexOf(lang) !== -1){
+            return lang ;
+        }
+
+        lang = lang+"-"+lang ;
+        if(availableLocales.indexOf(lang) !== -1){
+            return lang ;
+        }
+
+        return "en-us" ;
+    }
+
+    /**
+     * Load the local for W2UI and configure W2UI with it
+     * 
+     * @param {function(Error)} callback called on finished
+     */
+    function loadW2uiLibLocale(callback){
+        var lib =  {
+            name: "w2ui-locale-"+w2uiLocaleCode(currentLocale.lang),
+            type: "json",
+            version: W2UI_VERSION,
+            cdn: "https://cdn.rawgit.com/vitmalina/w2ui/master/src/locale/"+w2uiLocaleCode(currentLocale.lang)+".json",
+            bowerPath: "w2ui/src/locale/"+w2uiLocaleCode(currentLocale.lang)+".json"
+        };
+
+        loadLib("w2ui-locale-"+currentLocale.lang, W2UI_VERSION, lib, function(err, results){
+            if(err){ return callback(err) ;}
+            var langJson = results[0][0] ;
+            window.w2utils.locale(langJson);
+            callback() ;
+        }) ;
+    }
+
+    /**
+     * Load the locales for date fields
+     * It get locales for flatpikr calendar and get moment locale to have default date format for current lang
+     * 
+     * Note : we are using moment locales but we don't load moment if it is not already loaded. We don't rely on moment libs
+     * 
+     * @param {function(Error)} callback called on finish
+     */
     function loadDateLibLocale(callback){
         var libPicker =  {
                 name: "flatpickr-calendar-locale-"+flatpickerLocaleCode(currentLocale.lang),
@@ -190,7 +333,9 @@
     
 
     /**
-     * init view translation
+     * init view fields
+     * 
+     * get all HTML elements having data-field attribute
      * 
      * @private
      */
@@ -215,7 +360,15 @@
         series(calls, callback) ;
     }
 
-
+    /**
+     * Create the field
+     * 
+     * @param {HTMLElement} element the HTML element to transform to field
+     * @param {string} fieldType the field type
+     * @param {string} fieldSize the field size
+     * @param {object} fieldOptions field options map (from element attributes)
+     * @param {function(Error)} callback called when the field is created
+     */
     function createField(element, fieldType, fieldSize, fieldOptions, callback){
         if(fieldType === "varchar" || fieldType==="text" || fieldType === "string" || fieldType === "password"){
             createTextField(element, fieldType, fieldSize, fieldOptions, callback) ;
@@ -225,17 +378,24 @@
         } else if(fieldType === "date" || fieldType==="datetime" || fieldType === "time"){
             createDateField(element, fieldType, fieldSize, fieldOptions, callback) ;
         } else if(fieldType === "selection" || fieldType === "select"){
-            //https://github.com/selectize/selectize.js
-            //https://github.com/select2/select2
-            //https://github.com/silviomoreto/bootstrap-select
-            createSelectionField(element, fieldType, fieldSize, fieldOptions, callback) ;
+            createSelectField(element, fieldType, fieldSize, fieldOptions, callback) ;
         } else if(fieldType === "boolean" || fieldType === "checkbox"  || fieldType === "toggle" || fieldType === "switch"){
             createCheckboxField(element, fieldType, fieldSize, fieldOptions, callback) ;
+        } else if(fieldType === "grid"){
+            createGridField(element, fieldType, fieldSize, fieldOptions, callback) ;
         } else {
-            callback("Unknow field type "+fieldType) ;
+            callback("Unknow field type "+fieldType) ; 
         }
     }
 
+    /**
+     * Load a lib from CDN/Bower if not already loaded or given in configure.libs
+     * 
+     * @param {string} name lib name
+     * @param {string} version the lib version
+     * @param {object} libDef the lib def for VeloxScriptLoader
+     * @param {function(Err)} callback called on loaded
+     */
     function loadLib(name, version, libDef, callback){
         if(!libs[name]){
             if(window[name]){
@@ -251,16 +411,21 @@
                 return callback("To have automatic script loading, you need to import VeloxScriptLoader");
             }
 
-            VeloxScriptLoader.load(libDef, function(err){
+            VeloxScriptLoader.load(libDef, function(err, result){
                 if(err){ return callback(err); }
                 libs[name] = window[name] ;
-                callback() ;
+                callback(null, result) ;
             }) ;
         }else{
             callback() ;
         }
     }
 
+    /**
+     * Load the input mask lib if needed and add mask aliases
+     * 
+     * @param {function(Error)} callback called on loaded
+     */
     function loadInputMask(callback){
         loadLib("Inputmask", INPUTMASK_VERSION, INPUT_MASK_LIB, function(err){
             if(err){ return callback(err);}
@@ -279,6 +444,19 @@
         }) ;
     }
 
+    /**
+     * Create a text field
+     * 
+     * If mask option is provided, an input mask is added to the field
+     * 
+     * The maxlength is set accordingly to the fieldSize option if given
+     * 
+     * @param {HTMLElement} element HTML element to transform
+     * @param {"password"|"varchar"|"text"|"string"} fieldType the field type
+     * @param {string} fieldSize the field size
+     * @param {object} fieldOptions field option (from attributes)
+     * @param {function(Error)} callback called when finished
+     */
     function createTextField(element, fieldType, fieldSize, fieldOptions, callback){
         var input = appendInputHtml(element) ;
         if(fieldType === "password"){
@@ -321,6 +499,13 @@
         }
     }
 
+    /**
+     * Add extra data to localdata such as thousands and decimal delimiters
+     * 
+     * Try to rely on toLocaleString browser if supported, if not supported, the numbro lib is loaded
+     * 
+     * @param {function(Error)} callback called on finished
+     */
     function fillLocales(callback){
         if((1000.99).toLocaleString('fr') === "1 000,99"){
             //the browser support locale string
@@ -340,6 +525,17 @@
         }
     }
 
+    /**
+     * Get the current locale of user
+     * 
+     * If the i18n extension is loaded, the locale is get from i18n extension
+     * If not, it is get from browser lang
+     * 
+     * If the i18n is loaded, the locale is automatically reloaded when locale change
+     * (note : it will be applied on new loaded view only, the existing view are not reload)
+     * 
+     * @param {function(Error)} callback called on finished
+     */
     function getLocale(callback){
         if(!currentLocale){
             currentLocale = {
@@ -364,6 +560,17 @@
         }
     }
 
+    /**
+     * Create a input masked number field.
+     * 
+     * The value is given in Decimal.js object to be able to handle big numbers and avoid rounding issues
+     * 
+     * @param {HTMLElement} element the HTML element to transform
+     * @param {"int"|"integer"|"number"|"decimal"|"double"|"float"|"precent"|"currency"} fieldType the field type
+     * @param {string} fieldSize the field size
+     * @param {object} fieldOptions field options (from attributes)
+     * @param {function(Error)} callback called when field is created
+     */
     function createNumberField(element, fieldType, fieldSize, fieldOptions, callback){
         var input = appendInputHtml(element) ;
         var maskField = null;
@@ -448,6 +655,19 @@
         } ;
     }
 
+    /**
+     * Create the date field.
+     * 
+     * Date field present popup calendar and masked input
+     * 
+     * The input format is automatically taken from locale
+     * 
+     * @param {HTMLElement} element the HTML element to transform
+     * @param {"date"|"datetime"|"time"} fieldType the field type
+     * @param {string} fieldSize the field size
+     * @param {object} fieldOptions field options (from attributes)
+     * @param {function(Error)} callback called on field created
+     */
     function createDateField(element, fieldType, fieldSize, fieldOptions, callback){
         var input = appendInputHtml(element) ;
         var maskField = null;
@@ -532,6 +752,9 @@
         } ;
     }
 
+    /**
+     * load the Switch CSS
+     */
     function loadSwitchCSS(){
         if(switchCSSLoaded){ return ;}
 
@@ -561,6 +784,239 @@
         switchCSSLoaded = true ;
     }
 
+    /**
+     * Create a select field
+     * 
+     * @param {HTMLElement} element the HTML element to transform
+     * @param {"select"|"selection"} fieldType the field type
+     * @param {string} fieldSize the field size
+     * @param {object} fieldOptions option from attribute
+     * @param {*} callback 
+     */
+    function createSelectField(element, fieldType, fieldSize, fieldOptions, callback){
+        loadLib("select2", SELECT2_VERSION, SELECT2_LIB, function(err){
+            if(err){ return callback(err); }
+
+            var select = null ;
+            if(element.tagName ===  "SELECT"){
+                select = element ;
+            }else{
+                var subSelects = element.getElementsByTagName("SELECT") ;
+                if(subSelects.length === 0){
+                    return callback("Your data field select should be a SELECT tag or contain a SELECT tag") ;
+                }
+                select = subSelects[0];
+            }
+            window.jQuery(select).select2();
+
+            element.veloxGetValue = function(){
+                return window.jQuery(select).val() ;
+            } ;
+            element.veloxSetValue = function(value){
+                window.jQuery(select).val(value) ;
+            } ;
+            callback() ;
+        }) ;
+    }
+
+    /**
+     * Create an unique ID
+     */
+    function uuidv4() {
+        if(crypto && crypto.getRandomValues){
+            return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+            ) ;
+        }else{
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+    }
+
+    /**
+     * Create the grid field
+     * 
+     * @param {HTMLElement} element the HTML element to transform
+     * @param {"grid"} fieldType the field type
+     * @param {string} fieldSize the field size
+     * @param {object} fieldOptions the field options (from attributes)
+     * @param {function(Error)} callback called when field is created
+     */
+    function createGridField(element, fieldType, fieldSize, fieldOptions, callback){
+        var subSelects = element.getElementsByTagName("TABLE") ;
+        if(subSelects.length === 0){
+            return callback("Your data field grid should contain a TABLE tag") ;
+        }
+        var table = subSelects[0];
+        var listThead = table.getElementsByTagName("THEAD") ;
+        var thead = listThead.length>0?listThead[0]:null ;
+        var listTh = Array.prototype.slice.call(table.getElementsByTagName("TH")) ;
+        if(listTh.length === 0){
+            return callback("Your data field grid should have at least a TH tag") ;
+        }
+
+        var listTr = Array.prototype.slice.call(table.getElementsByTagName("TR")) ;
+        
+
+        loadLib("w2ui", W2UI_VERSION, W2UI_LIB, function(err){
+            if(err){ return callback(err); }
+
+            getLocale(function(err){
+                if(err){ return callback(err); }
+                
+                loadW2uiLibLocale(function(err){
+                    if(err){ return callback(err); }
+
+                    var idPath = Array.prototype.slice.call(
+                    window.jQuery(element).parents()).map(function(p){ 
+                        return p.getAttribute("data-original-id"); 
+                    }).filter(function(c){ return !!c;}).reverse().join(".") ;
+
+                    var gridOptions = {
+                        name: idPath||uuidv4(),
+                        columns   : [],
+                        show      : {},
+                        searches : []
+                    } ;
+
+                    if(thead){
+                        ["header", "toolbar", "footer", "lineNumbers", "selectColumn", "expandColumn"].forEach(function(showAttr){
+                            var showValue = thead.getAttribute(showAttr);
+                            if(showValue){
+                                gridOptions.show[showAttr] = showValue.trim().toLowerCase() === "true" ;
+                            }
+                        }) ;
+                    }
+
+                    if(Object.keys(gridOptions.show).length === 0){
+                        delete gridOptions.show;
+                    }
+
+                    var totalColsWithSizePx  = 0;
+                    var totalColsWithSizePercent  = 0;
+                    
+                    listTh.forEach(function(th){
+                        var colDef = {
+                            caption   : th.innerHTML,
+                            field     : th.getAttribute("data-field-name"),
+                            size      : th.getAttribute("data-field-size")
+                        };
+                        if(colDef.size){
+                            if(colDef.size.indexOf("px") === -1 && colDef.size.indexOf("%") === -1){
+                                //no unit given, assuming px
+                                colDef.size = colDef.size+"px" ;
+                            }
+
+                            if(colDef.size.indexOf("px") !== -1){
+                                totalColsWithSizePx += parseInt(colDef.size.replace("px", ""), 10) ;
+                            }else if(colDef.size.indexOf("%") !== -1){
+                                totalColsWithSizePercent += parseInt(colDef.size.replace("%", ""), 10) ;
+                            }
+                        }
+                        
+
+                        ["sortable", "searchable", "hidden"].forEach(function(colAtt){
+                                var colValue = th.getAttribute(colAtt);
+                                if(colValue){
+                                    colDef[colAtt] = colValue.trim().toLowerCase() === "true" ;
+                                }
+                        });
+                        var type = th.getAttribute("data-field-type") ;
+                        if(type){
+                            colDef.render = type ;
+                        }
+                        gridOptions.columns.push(colDef) ;
+                    }) ;
+                    var totalColsNoSize = gridOptions.columns.filter(function(c){ return !c.size;}).length ;
+                    if(totalColsNoSize > 0){
+                        //there is some column with no size, we must compute ideal size
+
+                        var totalWidth = element.offsetWidth-3 ;
+                        var totalPercent = 100 ;
+                        var defaultColSize = "10%" ;
+                        if(totalColsWithSizePx === 0){
+                            //no size is defined in px, use %
+                            var colPercent = (totalPercent - totalColsWithSizePercent)/totalColsNoSize ;
+                            if(colPercent>0){
+                                defaultColSize = colPercent+"%" ;
+                            }
+                        }else{
+                            //there is pixel column, compute in pixels
+                            var percentPixels = (totalColsWithSizePercent/100) * totalWidth ;
+                            var remainingWidth = totalWidth - percentPixels - totalColsWithSizePx ;
+                            var colPixel = (remainingWidth / totalColsNoSize) ;
+                            if(colPixel > 10){
+                                defaultColSize = colPixel + "px" ;
+                            }
+                        }
+
+                        gridOptions.columns.forEach(function(c){ 
+                            if(!c.size){
+                                c.size = defaultColSize ;
+                            }
+                        }) ;
+                    }
+
+                    var records = [] ;
+                    var recid = 1 ;
+                    listTr.forEach(function(tr){
+                        var listTd = Array.prototype.slice.call(tr.getElementsByTagName("TD")) ;
+                        if(listTd.length > 0){
+                            var record = {recid: recid++} ;
+                            listTd.forEach(function(td, i){
+                                var value = td.innerHTML ;
+                                if(gridOptions.columns[i].render && gridOptions.columns[i].render.indexOf("date") !== -1){
+                                    value = new Date(value) ;
+                                }
+                                record[gridOptions.columns[i].field] = value ;
+                            }) ;
+                            records.push(record) ;
+                        }
+                    }) ;
+                    if(records.length>0){
+                        gridOptions.records = records ;
+                    }
+
+                    if(libs.w2ui[gridOptions.name]){
+                        //destroy existing grid before recreate
+                        libs.w2ui[gridOptions.name].destroy();
+                    }
+                    element.innerHTML = "" ;
+                    var grid = window.jQuery(element).w2grid(gridOptions) ;
+                
+                    element.veloxGetValue = function(){
+                        var records = grid.records.slice() ;
+                        records.forEach(function(r){
+                            delete r.recid ;
+                        }) ;
+                        return records;
+                    } ;
+                    element.veloxSetValue = function(value){
+                        grid.clear() ;
+                        value.forEach(function(d,i){
+                            if(!d.recid){
+                                d.recid = i ;
+                            }
+                        });
+                        grid.add(value) ;
+                    } ;
+                    callback() ;
+                }) ;
+            }) ;
+        }) ;
+    }
+
+    /**
+     * Create a checkbox or a toggle field
+     * 
+     * @param {HTMLElement} element the HTML element to transform
+     * @param {"boolean"|"checkbox"|"switch"|"toggle"} fieldType the field type
+     * @param {string} fieldSize the field size
+     * @param {options} fieldOptions the field options (from attributes)
+     * @param {function(Error)} callback called when the field is created
+     */
     function createCheckboxField(element, fieldType, fieldSize, fieldOptions, callback){
         var input = null;
         if(fieldType === "boolean" || fieldType === "checkbox"){
@@ -595,14 +1051,30 @@
         callback() ;
     }
 
+    /**
+     * Change a string in regexp
+     * @param {string} str the string to transform in regexp
+     */
     var escapeRegExp = function (str) {
 		return str.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1");
 	} ;
 
+    /**
+     * Replace all occurence in a string
+     * 
+     * @param {string} str string in which to replace
+     * @param {string} find the string to find
+     * @param {string} replace the string to replace
+     */
 	var replaceAll = function (str, find, replace) {
 		return str.replace(new RegExp(escapeRegExp(find), 'g'), replace);
 	} ;
 
+    /**
+     * Describe an HTML as string
+     * 
+     * @param {HTMLElement} element the HTML element to describe
+     */
     function elToString(element){
         var str = element.tagName ;
         for(var i=0; i<element.attributes.length; i++){
@@ -611,6 +1083,11 @@
         return "["+str+"]" ;
     }
 
+    /**
+     * Add input field in HTML element
+     * 
+     * @param {HTMLElement} element the HTML element in which add input field
+     */
     function appendInputHtml(element){
         var input = document.createElement("INPUT") ;
         input.type = "text" ;

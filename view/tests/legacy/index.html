@@ -4,6 +4,7 @@
 	<script src="../../src/velox-web-view.js"></script>
 	<script src="../../src/ext/velox-i18next.js"></script>
 	<script src="../../src/ext/velox-fields.js"></script>
+	<script src="../../src/ext/velox-fields-schema.js"></script>
 </head>
 <body>
 	<h1>Test 1</h1>
@@ -13,17 +14,17 @@
 
 		VeloxScriptLoader.setOptions({policy: "bower", bowerPath: "bower_components"}) ;
 
-		var schema = {
+		VeloxWebView.fieldsSchema.setSchema({
 			todo_list: {
 				columns: [
-					{name : "name", type: "varchar", size: 10},
+					{name : "name", type: "varchar", size: 10, options: {mask: "uppercase"}},
 					{name : "status", type: "selection", values: ["todo", "done"]},
 					{name : "date_done", type: "date"},
 					{name : "level", type: "int"},
-					{name : "cost", type: "decimal:3"},
+					{name : "cost", type: "decimal"},
 				]
 			}
-		}
+		}) ;
 
 
 		var myList = {

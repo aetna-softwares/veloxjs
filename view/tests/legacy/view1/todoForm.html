@@ -1,9 +1,32 @@
 
-<div data-field="varchar" data-field-size="10" data-field-mask="uppercase" data-bind="name"></div>
+<div data-bind="name" data-field-def="todo_list.name"></div>
 
 <div data-field="boolean"></div>
 <div data-field="toggle"></div>
 
+<div data-field="grid" style="width: 100%; height: 350px;">
+    <table>
+        <thead data-field-show-header="true" data-field-show-footer="true">
+            <tr>
+                <th data-field-name="name" data-i18n="name" data-field-sortable="true" data-field-searchable="true"></th>
+                <th data-field-name="age" data-i18n="age" data-field-type="int" data-field-sortable="false" data-field-searchable="false" data-field-size="100"></th>
+                <th data-field-name="dateBirth" data-i18n="datebirth" data-field-type="date"  data-field-hidden="true"></th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Toto</td>
+                <td>12</td>
+                <td>2017-01-01</td>
+            </tr>
+            <tr>
+                <td>Tata</td>
+                <td>16</td>
+                <td>2010-01-01</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
 
 
 <button id="validate" data-emit>Validate</button>

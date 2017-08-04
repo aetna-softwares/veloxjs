@@ -22,9 +22,12 @@
     "i18next-browser-languagedetector": "^2.0.0",
     "decimal.js-light": "https://github.com/MikeMcl/decimal.js-light.git#2.2.0",
     "flatpickr": "flatpickr-calendar#3.0.5-1",
-    "moment": "momentjs#^2.18.1"
+    "moment": "momentjs#^2.18.1",
+    "select2": "^4.0.3",
+    "w2ui": "https://github.com/vitmalina/w2ui.git#master"
   },
   "resolutions": {
-    "flatpickr": "3.0.5-1"
+    "flatpickr": "3.0.5-1",
+    "w2ui": "master"
   }
 }
